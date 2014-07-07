@@ -34,15 +34,19 @@ class HttpUtil(object):
         self._headers = {}
         self._headers['Referer'] = DEFAULT_REFERER
         self._headers['User-Agent'] = DEFAULT_USER_AGENT
+        self._headers['Connection'] = 'keep-alive'
+        self._headers['Accept'] = r'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        self._headers['Cache-Control'] = 'max-age=0'
 
     def get(self, url, headers=None):
-        resp = self._request(url, headers=headers)#.read(self._buffer_size)
-        return resp.read()
+        self.response = self._request(url, headers=headers)
+        return self.response.read()
 
     def post(self, url, post_dic, headers=None):
-        return self._request(url, headers=headers,
+        self.response = self._request(url, headers=headers,
             post_data=urllib.urlencode(post_dic).encode(self._charset)
-        ).read()
+        )
+        return self.response.read()
 
     def fetch(self, url, handler, post_data=None, headers=None):
         if handler is None:
@@ -50,6 +54,15 @@ class HttpUtil(object):
         handler.set_parent(self)
         resp = self._request(url, post_data=post_data, headers=headers)
         handler.handle(req=None, resp=resp)
+
+    def parse_charset(self):
+        if self.response:
+            import re
+            charset = re.search(r'charset=([\w-]+)',
+                             self.response.headers['content-type'])
+            if not charset:
+                raise ValueError('content-type filed not found.')
+            return charset.group(1)
 
     def add_header(self, key, value):
         self._headers[key] = value

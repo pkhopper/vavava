@@ -47,7 +47,7 @@ class DBBase:
 
 class WorkBase:
     def handle(self, db):
-        raise r"uncomplete implament"
+        raise NotImplementedError()
 
 class dbpool(threading.Thread):
     def __init__(self, path, cls=DBBase):

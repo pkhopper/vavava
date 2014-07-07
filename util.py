@@ -94,13 +94,14 @@ def readlines(name):
 
 
 def assure_path(path):
-    """assure a dir or dir sequence is there
-    @rtype : None
-    @param path: 
-    """
-    if not os.path.isdir(path):
-        assure_path(os.path.dirname(path))
-        os.mkdir(path)
+    fullpath = os.path.abspath(path)
+    path_trace = []
+    while fullpath != '/' and not os.path.exists(fullpath):
+        path_trace.append(fullpath)
+        fullpath = os.path.dirname(fullpath)
+    path_trace.reverse()
+    for dir in path_trace:
+        os.mkdir(dir)
 
 
 def walk_dir(top, topdown=True, onerror=None, followlinks=False):
