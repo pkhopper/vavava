@@ -3,8 +3,8 @@
 
 import urllib
 import urllib2
-import socket
-import cookielib # import LWPCookieJar
+import sys
+import cookielib
 from io import BytesIO
 from vavava import util
 
@@ -97,12 +97,14 @@ class HttpUtil(object):
 import time
 import threading
 class DownloadStreamHandler:
-    def __init__(self, fp, duration=0, size=DEFAULT_BUFFER_SIZE):
+    def __init__(self, fp, duration=0, start=None, end=None, mutex=None):
         self.parent = None
-        self.buff_size = size
+        self.start = start
+        self.end = end
         self.fp = fp
         self.duration = duration
         self.ev = threading.Event()
+        self.mutex = mutex
         if duration > 0:
             self.stop_time = duration + time.time()
 
@@ -114,15 +116,21 @@ class DownloadStreamHandler:
 
     def handle(self, req, resp):
         self.ev.clear()
-        while not self.ev.is_set() \
-            and self._handle(resp.read(self.buff_size)):
-            pass
-
-    def _handle(self, data):
-        if not data:
-            return False
-        self.fp.write(data)
-        return self.duration <= 0 or self.stop_time > time.time()
+        while not self.ev.is_set():
+            if self.duration > 0 and self.stop_time <= time.time():
+                break
+            if self.start and self.start >= self.end:
+                break
+            data = resp.read(DEFAULT_BUFFER_SIZE)
+            if not data:
+                break
+            if self.mutex:
+                with self.mutex:
+                    self.fp.seek(self.start)
+                    self.start += len(data)
+                    self.fp.write(data)
+            else:
+                self.fp.write(data)
 
 import gzip
 import zlib
@@ -153,3 +161,63 @@ class ContentEncodingProcessor(urllib2.BaseHandler):
             resp.msg = old_resp.msg
         return resp
 
+class MiniAxel(HttpUtil):
+    def __init__(self,
+                 charset=DEFAULT_CHARSET,
+                 timeout=DEFAULT_TIMEOUT,
+                 debug_lvl=DEFAULT_DEBUG_LVL,
+                 proxy=None,
+                 log=None):
+        HttpUtil.__init__(self,
+                 charset=DEFAULT_CHARSET,
+                 timeout=DEFAULT_TIMEOUT,
+                 debug_lvl=DEFAULT_DEBUG_LVL,
+                 proxy=proxy,
+                 log=log)
+        self.threads = []
+
+    def stop(self):
+        for thread in self.threads:
+            thread.stop()
+
+    def dl(self, url, fp, n=5):
+        assert n > 0
+        if n == 1:
+            self.fetch(url, DownloadStreamHandler(fp))
+            return
+        self.response = self._request(url)
+        assert self.response.code == 200
+        info = self.response.info()
+        size = int(info.getheaders('Content-Length')[0])
+        assert info.getheaders('Accept-Ranges')[0] == 'bytes'
+        clips = []
+        clip_size = size/n
+        for i in xrange(0, n-1):
+            clips.append((i*clip_size, i*clip_size+clip_size-1))
+        clips.append(((n-1)*clip_size, size))
+        mutex = threading.RLock()
+        for clip in clips:
+            thread = MiniAxel.DownloadThread(
+                url=url, fp=fp, start=clip[0], end=clip[1], mutex=mutex)
+            self.threads.append(thread)
+        for thread in self.threads:
+            thread.join()
+
+    class DownloadThread:
+        def __init__(self, url, fp, start, end, mutex):
+            self.url = url
+            self.fp = fp
+            self.start = start
+            self.end = end
+            self.mutex = mutex
+            self.download_handle = DownloadStreamHandler(
+                fp=self.fp, duration=0, start=self.start, end=self.end, mutex=self.mutex)
+            self.stop = self.download_handle.syn_stop
+            self.thread = threading.Thread(target=self._run)
+            self.join = self.thread.join
+            self.thread.start()
+
+        def _run(self,*_args, **_kwargs):
+            http = HttpUtil()
+            http.add_header('Range', 'bytes=%s-%s' % (self.start, self.end))
+            http.fetch(self.url, self.download_handle)

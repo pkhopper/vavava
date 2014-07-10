@@ -5,6 +5,7 @@ import sys
 import unittest
 import util
 import httputil
+import os
 
 __all__ = ['TestHttputil', 'TestUtil','TestSqliteutil']
 
@@ -35,10 +36,26 @@ class TestHttputil(unittest.TestCase):
         handle = httputil.DownloadStreamHandler(open('/Users/pk/Downloads/tmp.flv', 'w'), duration=10)
         client.fetch(url, handle)
 
+    def test_miniaxel(self):
+        url = r'http://localhost/w/video/mv.flv'
+        n = 10
+        orig_md5 = r'31e4a49026402f41770c3f78c658c685'
+        multi = r'test_multi.flv'
+        single = r'test_single.flv'
+        httputil.MiniAxel().dl(url, file_name=multi, n=9)
+        httputil.MiniAxel().dl(url, file_name=single, n=1)
+        with open(multi, 'rb') as fp:
+            multi_md5 = util.md5_for_file(fp)
+        with open(single, 'rb') as fp:
+            singl_md5 = util.md5_for_file(fp)
+        os.remove(multi)
+        os.remove(single)
+        self.assertTrue(orig_md5 == multi_md5)
+        self.assertTrue(orig_md5 == singl_md5)
+
 
 class TestUtil(unittest.TestCase):
     def test_assure_path(self):
-        import os
         dir = r'/Users/pk/tmp/a/b/c/d'
         util.assure_path(dir)
         self.assertTrue(os.path.exists(dir))
