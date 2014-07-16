@@ -2,11 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import os
-import time
 import Queue
 import sqlite3
 import threading
-from vavava import util
 
 
 class DBBase:

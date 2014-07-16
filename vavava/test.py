@@ -3,9 +3,11 @@
 
 import sys
 import unittest
-import util
-import httputil
 import os
+
+import util
+from vavava.vavava import httputil
+
 
 __all__ = ['TestHttputil', 'TestUtil','TestSqliteutil']
 

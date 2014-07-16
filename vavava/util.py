@@ -50,6 +50,9 @@ def get_logger(logfile=None, level=logging.DEBUG):
     return logger
 
 def get_file_path(file_fullname):
+    """ return path of file_fullname
+        if file_full_name is link file, return origin file path
+    """
     script_path = file_fullname
     if os.path.islink(file_fullname):
         script_path = os.path.dirname(os.path.abspath(os.readlink(file_fullname)))
@@ -90,8 +93,8 @@ def readlines(name):
     path = os.path.split(fullname)[0]
     if not os.path.isdir(path):
         os.makedirs(path)
-    return open(name, "r").readlines()
-
+    with open(name, 'r') as fp:
+        return fp.readlines()
 
 def assure_path(path):
     fullpath = os.path.abspath(path)
@@ -102,6 +105,7 @@ def assure_path(path):
     path_trace.reverse()
     for dir in path_trace:
         os.mkdir(dir)
+    return os.path.exists(path)
 
 
 def walk_dir(top, topdown=True, onerror=None, followlinks=False):
