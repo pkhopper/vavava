@@ -2,12 +2,12 @@
 # coding=utf-8
 
 import os
-import sys
 
 pjoin = os.path.join
 pdirname = os.path.dirname
 pabspath = os.path.abspath
 
+__version__ = "0.1"
 
 class Config:
     def __init__(self, config=None):
