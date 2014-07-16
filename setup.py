@@ -21,7 +21,7 @@ setup(
     license = "BSD",
     url = URL,
     packages = find_packages(exclude = ["test.*", "test"]),
-    package_data = [],
+    # package_data = [],
     classifiers = [
         "Development Status :: 3 - Alpha",
         "Environment :: Web Environment",
@@ -32,5 +32,5 @@ setup(
         "Framework :: Django",
     ],
     zip_safe = False,
-    requires = []
+    # requires = []
 )
