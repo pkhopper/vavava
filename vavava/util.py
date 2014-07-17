@@ -11,7 +11,7 @@ import json
 get_time_string = lambda: time.strftime("%Y%m%d%H%M%S", time.localtime())
 get_charset = lambda ss: chardet.detect(ss)['encoding']
 set_default_utf8 = lambda: reload(sys).setdefaultencoding("utf8")
-get_file_sufix = lambda name: os.path.splitext(name)[1][1:]
+file_sufix = lambda name: os.path.splitext(name)[1][1:]
 
 import signal
 import threading
@@ -49,7 +49,7 @@ def get_logger(logfile=None, level=logging.DEBUG):
     logger.setLevel(level)
     return logger
 
-def get_file_path(file_fullname):
+def script_path(file_fullname):
     """ return path of file_fullname
         if file_full_name is link file, return origin file path
     """
@@ -85,16 +85,6 @@ def import_any_module(name):
             return getattr(mod, name[i + 1:])
         except:
             raise RuntimeError('No module of: %s found' % name)
-
-
-def readlines(name):
-    """ open().readlines() """
-    fullname = os.path.abspath(name)
-    path = os.path.split(fullname)[0]
-    if not os.path.isdir(path):
-        os.makedirs(path)
-    with open(name, 'r') as fp:
-        return fp.readlines()
 
 def assure_path(path):
     fullpath = os.path.abspath(path)
