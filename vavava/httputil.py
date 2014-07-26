@@ -157,55 +157,6 @@ class ContentEncodingProcessor(urllib2.BaseHandler):
             resp.msg = old_resp.msg
         return resp
 
-import sys
-class ProgressBar:
-    def __init__(self, size=None):
-        self.set_size(size)
-        self.reset()
-        self.mutex = _Lock()
-
-    def reset(self):
-        self.cur_size = self.last_size = 0
-        self.last_updat = self.start = _time()
-
-    def set_size(self, size):
-        self.size = size
-
-    def update(self, data_size):
-        with self.mutex:
-            self.cur_size += data_size
-
-    def display(self):
-        assert self.size
-        now = _time()
-        duration = now - self.last_updat
-        if duration < 1:
-            # print '*******%d-%d=%d'%(now, self.last_updat, duration)
-            return
-        percentage = 0
-        output = '\r['
-        for i in xrange(20):
-            percentage = 5.0*self.cur_size/self.size
-            if i <= percentage:
-                output += '='
-            else:
-                output += '.'
-        output += r'] %.1d%%'%(percentage*10)
-        speed = (self.cur_size - self.last_size)/duration
-        if speed > 0:
-            output += ' %5.1dk %.1ds-%ds %dk/%dk       '%(
-                speed/1024, now - self.start,
-                (self.size-self.cur_size)*1024/speed,
-                self.cur_size/1024, self.size/1024
-            )
-        else:
-            output += ' 0k %.1ds-???s %dk/%dk       '%(
-                now - self.start, self.cur_size/1024, self.size/1024)
-        sys.stdout.write(output)
-        sys.stdout.flush()
-        self.last_updat = now
-        self.last_size = self.cur_size
-
 
 class MiniAxel(HttpUtil):
     def __init__(self, progress_bar=None, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
@@ -241,6 +192,8 @@ class MiniAxel(HttpUtil):
             )
             self.threads.append(thread)
         self.join()
+        if self.progress_bar:
+            self.progress_bar.display(force=True)
 
     def stop(self):
         for thread in self.threads:
@@ -297,6 +250,60 @@ class MiniAxel(HttpUtil):
                     if self.log:
                         self.log.exception(e)
                     pass
+
+
+import sys
+class ProgressBar:
+    def __init__(self, size=None):
+        self.set_size(size)
+        self.reset()
+        self.mutex = _Lock()
+
+    def reset(self):
+        self.cur_size = self.last_size = 0
+        self.last_updat = self.start = _time()
+
+    def set_size(self, size):
+        self.size = size
+
+    def update(self, data_size):
+        with self.mutex:
+            self.cur_size += data_size
+
+    def display(self, force=False):
+        assert self.size
+        now = _time()
+        duration = now - self.last_updat
+        if not force and duration < 1:
+            # print '*******%d-%d=%d'%(now, self.last_updat, duration)
+            return
+        percentage = 0
+        output = '\r['
+        for i in xrange(20):
+            percentage = 5.0*self.cur_size/self.size
+            if i <= percentage:
+                output += '='
+            else:
+                output += '.'
+        output += r'] %.1d%%'%(percentage*10)
+        speed = (self.cur_size - self.last_size)/duration
+        if speed > 0:
+            output += ' %5.1dk %.1ds-%ds %dk/%dk       '%(
+                speed/1024, now - self.start,
+                (self.size-self.cur_size)*1024/speed,
+                self.cur_size/1024, self.size/1024
+            )
+        else:
+            if self.cur_size == 0:
+                expect = 0
+            else:
+                expect = (self.size-self.cur_size)*(now - self.start)/self.cur_size
+            output += ' 0k %.1ds-%ds %dk/%dk       '%(
+                now - self.start, expect, self.cur_size/1024, self.size/1024)
+        sys.stdout.write(output)
+        sys.stdout.flush()
+        self.last_updat = now
+        self.last_size = self.cur_size
 
 if __name__ == "__main__":
     url = r'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
