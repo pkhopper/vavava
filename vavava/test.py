@@ -44,8 +44,8 @@ class TestHttputil(unittest.TestCase):
         orig_md5 = r'31e4a49026402f41770c3f78c658c685'
         multi = r'test_multi.flv'
         single = r'test_single.flv'
-        multi_md5 = None
-        singl_md5 = None
+        multi_md5 = ''
+        singl_md5 = ''
         try:
             with open(multi, 'w') as fp:
                 httputil.MiniAxel().dl(url, fp=fp, n=9)
@@ -58,8 +58,10 @@ class TestHttputil(unittest.TestCase):
         except Exception as e:
             print e
         finally:
-            os.remove(multi)
-            os.remove(single)
+            if os.path.exists(multi):
+                os.remove(multi)
+            if os.path.exists(single):
+                os.remove(single)
         self.assertTrue(orig_md5 == multi_md5)
         self.assertTrue(orig_md5 == singl_md5)
 
