@@ -6,7 +6,7 @@ import unittest
 import os
 
 import util
-from vavava.vavava import httputil
+from vavava import httputil
 
 
 __all__ = ['TestHttputil', 'TestUtil','TestSqliteutil']
@@ -44,14 +44,22 @@ class TestHttputil(unittest.TestCase):
         orig_md5 = r'31e4a49026402f41770c3f78c658c685'
         multi = r'test_multi.flv'
         single = r'test_single.flv'
-        httputil.MiniAxel().dl(url, file_name=multi, n=9)
-        httputil.MiniAxel().dl(url, file_name=single, n=1)
-        with open(multi, 'rb') as fp:
-            multi_md5 = util.md5_for_file(fp)
-        with open(single, 'rb') as fp:
-            singl_md5 = util.md5_for_file(fp)
-        os.remove(multi)
-        os.remove(single)
+        multi_md5 = None
+        singl_md5 = None
+        try:
+            with open(multi, 'w') as fp:
+                httputil.MiniAxel().dl(url, fp=fp, n=9)
+            with open(multi, 'w') as fp:
+                httputil.MiniAxel().dl(url, fp=fp, n=1)
+            with open(multi, 'rb') as fp:
+                multi_md5 = util.md5_for_file(fp)
+            with open(single, 'rb') as fp:
+                singl_md5 = util.md5_for_file(fp)
+        except Exception as e:
+            print e
+        finally:
+            os.remove(multi)
+            os.remove(single)
         self.assertTrue(orig_md5 == multi_md5)
         self.assertTrue(orig_md5 == singl_md5)
 
@@ -61,6 +69,11 @@ class TestUtil(unittest.TestCase):
         dir = r'/Users/pk/tmp/a/b/c/d'
         util.assure_path(dir)
         self.assertTrue(os.path.exists(dir))
+
+    def test_check_cmd(self):
+        self.assertTrue(util.check_cmd('axel'))
+        self.assertTrue(not util.check_cmd('XXXXX'))
+        self.assertTrue(util.check_cmd('ls'))
 
 class TestSqliteutil(unittest.TestCase):
     def test_ok(self):

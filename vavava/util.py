@@ -151,3 +151,8 @@ def md5_for_file(f, block_size=2**20):
             break
         md5.update(data)
     return md5.hexdigest()
+
+def check_cmd(cmd):
+    for cmdpath in os.environ['PATH'].split(':'):
+        if os.path.isdir(cmdpath) and cmd in os.listdir(cmdpath):
+            return True
