@@ -5,8 +5,9 @@ import urllib
 import urllib2
 import cookielib
 from io import BytesIO
-from time import time as cur_time
-from threading import Thread, Event, Lock
+from time import time as _time
+from threading import Thread as _Thread, Event as _Event, Lock as _Lock
+from socket import timeout as _socket_timeout
 
 DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows; U; Windows NT 6.1; ' \
                      'en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
@@ -95,12 +96,12 @@ class DownloadStreamHandler:
         self.end = end
         self.fp = fp
         self.duration = duration
-        self.ev = Event()
+        self.ev = _Event()
         self.stop = self.syn_stop = lambda :self.ev.set()
         self.mutex = mutex
         self.progress_bar = progress_bar
         if duration > 0:
-            self.stop_time = duration + cur_time()
+            self.stop_time = duration + _time()
 
     def set_parent(self, p):
         self.parent = p
@@ -108,7 +109,7 @@ class DownloadStreamHandler:
     def handle(self, req, resp):
         self.ev.clear()
         while not self.ev.is_set():
-            if self.duration > 0 and self.stop_time <= cur_time():
+            if self.duration > 0 and self.stop_time <= _time():
                 break
             if self.start and self.start >= self.end:
                 break
@@ -159,17 +160,24 @@ class ContentEncodingProcessor(urllib2.BaseHandler):
 import sys
 class ProgressBar:
     def __init__(self, size=None):
-        self.size = size
-        self.mutex = Lock()
+        self.set_size(size)
+        self.reset()
+        self.mutex = _Lock()
+
+    def reset(self):
         self.cur_size = self.last_size = 0
-        self.last_updat = self.start = cur_time()
+        self.last_updat = self.start = _time()
+
+    def set_size(self, size):
+        self.size = size
 
     def update(self, data_size):
         with self.mutex:
             self.cur_size += data_size
 
     def display(self):
-        now = cur_time()
+        assert self.size
+        now = _time()
         duration = now - self.last_updat
         if duration < 1:
             # print '*******%d-%d=%d'%(now, self.last_updat, duration)
@@ -200,34 +208,12 @@ class ProgressBar:
 
 
 class MiniAxel(HttpUtil):
-    def __init__(self, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
+    def __init__(self, progress_bar=None, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
                  debug_lvl=DEFAULT_DEBUG_LVL, proxy=None, log=None):
         HttpUtil.__init__(self, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
                  debug_lvl=DEFAULT_DEBUG_LVL, proxy=proxy, log=log)
         self.threads = []
-        self.progress_bar = None
-
-    def stop(self):
-        for thread in self.threads:
-            thread.stop()
-
-    def join(self):
-        finished = []
-        thread_num = len(self.threads)
-        try:
-            while len(finished) < thread_num:
-                for thread in self.threads:
-                    if thread not in finished:
-                        if thread.thread.is_alive:
-                            thread.join(timeout=1)
-                            self.progress_bar.display()
-                        else:
-                            finished.append(thread)
-        except KeyboardInterrupt as e:
-            for thread in self.threads:
-                if thread not in finished:
-                    thread.download_handle.stop()
-                    thread.join()
+        self.progress_bar = progress_bar
 
     def dl(self, url, fp, headers=None, n=5):
         assert n > 0
@@ -244,40 +230,78 @@ class MiniAxel(HttpUtil):
         for i in xrange(0, n-1):
             clips.append((i*clip_size, i*clip_size+clip_size-1))
         clips.append(((n-1)*clip_size, size))
-        mutex = Lock()
-        self.progress_bar = ProgressBar(size=size)
+        mutex = _Lock()
+        if self.progress_bar:
+            self.progress_bar.set_size(size)
+            self.progress_bar.reset()
         for clip in clips:
             thread = MiniAxel.DownloadThread(
                 url=url, fp=fp, start=clip[0], end=clip[1], mutex=mutex,
-                progress_bar=self.progress_bar)
+                progress_bar=self.progress_bar
+            )
             self.threads.append(thread)
         self.join()
 
+    def stop(self):
+        for thread in self.threads:
+            thread.stop()
+
+    def join(self):
+        finished = []
+        thread_num = len(self.threads)
+        try:
+            if not self.progress_bar:
+                for thread in self.threads:
+                    thread.join()
+                return
+            while len(finished) < thread_num:
+                for thread in self.threads:
+                    if thread not in finished:
+                        if thread.thread.isAlive():
+                            thread.join(timeout=1)
+                            self.progress_bar.display()
+                        else:
+                            finished.append(thread)
+        except KeyboardInterrupt as e:
+            for thread in self.threads:
+                if thread not in finished:
+                    thread.download_handle.stop()
+                    thread.join()
+
     class DownloadThread:
-        def __init__(self, url, fp, start, end, mutex, progress_bar=None, headers=None):
+        def __init__(self, url, fp, start, end, mutex,
+                     progress_bar=None, headers=None, log=None):
             self.url = url
             self.fp = fp
             self.start = start
             self.end = end
             self.mutex = mutex
             self.headers = headers
+            self.log = log
             self.download_handle = DownloadStreamHandler(
                 fp=self.fp, duration=0, start=self.start, end=self.end,
                 mutex=self.mutex, progress_bar=progress_bar)
             self.stop = self.download_handle.syn_stop
-            self.thread = Thread(target=self._run)
+            self.thread = _Thread(target=self._run)
             self.join = self.thread.join
             self.thread.start()
 
         def _run(self,*_args, **_kwargs):
-            http = HttpUtil()
+            http = HttpUtil(timeout=6)
             http.add_header('Range', 'bytes=%s-%s' % (self.start, self.end))
-            http.fetch(self.url, self.download_handle, headers=self.headers)
-
+            while True:
+                try:
+                    http.fetch(self.url, self.download_handle, headers=self.headers)
+                    return
+                except _socket_timeout as e:
+                    if self.log:
+                        self.log.exception(e)
+                    pass
 
 if __name__ == "__main__":
     url = r'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
-    axel = MiniAxel()
+    progress_bar = ProgressBar()
+    axel = MiniAxel(progress_bar=progress_bar)
     with open('tmp', 'w') as fp:
         axel.dl(url, fp=fp)
     import os

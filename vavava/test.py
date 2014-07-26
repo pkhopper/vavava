@@ -47,10 +47,12 @@ class TestHttputil(unittest.TestCase):
         single = r'test_single'
         multi_md5 = singl_md5 = ''
         try:
+            progress_bar = httputil.ProgressBar()
+            axel = httputil.MiniAxel(progress_bar=progress_bar)
             with open(multi, 'w') as fp:
-                httputil.MiniAxel().dl(TestHttputil.url, fp=fp, n=9)
+                axel.dl(TestHttputil.url, fp=fp, n=9)
             with open(single, 'w') as fp:
-                httputil.MiniAxel().dl(TestHttputil.url, fp=fp, n=1)
+                axel.dl(TestHttputil.url, fp=fp, n=1)
             with open(multi, 'rb') as fp:
                 multi_md5 = util.md5_for_file(fp)
                 print multi_md5
