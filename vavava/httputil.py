@@ -178,10 +178,10 @@ class MiniAxel(HttpUtil):
         for thread in self.threads:
             thread.stop()
 
-    def dl(self, url, fp, n=5):
+    def dl(self, url, fp, headers=None, n=5):
         assert n > 0
         if n == 1:
-            self.fetch(url, DownloadStreamHandler(fp))
+            self.fetch(url, DownloadStreamHandler(fp), headers=headers)
             return
         self.response = self._request(url)
         assert self.response.code == 200
@@ -200,14 +200,16 @@ class MiniAxel(HttpUtil):
             self.threads.append(thread)
         for thread in self.threads:
             thread.join()
+        return 0
 
     class DownloadThread:
-        def __init__(self, url, fp, start, end, mutex):
+        def __init__(self, url, fp, start, end, mutex, headers=None):
             self.url = url
             self.fp = fp
             self.start = start
             self.end = end
             self.mutex = mutex
+            self.headers = headers
             self.download_handle = DownloadStreamHandler(
                 fp=self.fp, duration=0, start=self.start, end=self.end, mutex=self.mutex)
             self.stop = self.download_handle.syn_stop
@@ -218,4 +220,4 @@ class MiniAxel(HttpUtil):
         def _run(self,*_args, **_kwargs):
             http = HttpUtil()
             http.add_header('Range', 'bytes=%s-%s' % (self.start, self.end))
-            http.fetch(self.url, self.download_handle)
+            http.fetch(self.url, self.download_handle, headers=self.headers)
