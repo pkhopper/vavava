@@ -57,7 +57,7 @@ class ThreadManager:
 
     def joinAll(self, timeout=1):
         if timeout:
-            timeout = timeout/len(self.threads)
+            timeout = 1.0*timeout/len(self.threads)
         for th in self.threads:
             th.join(timeout)
 

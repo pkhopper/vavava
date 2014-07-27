@@ -8,6 +8,8 @@ import os
 from vavava import util
 from vavava import httputil
 
+sys.path.insert(0, '.')
+
 
 __all__ = ['TestHttputil', 'TestUtil', 'TestSqliteutil']
 
@@ -26,6 +28,7 @@ class TestHttputil(unittest.TestCase):
         print len(content.decode('utf8'))
 
     def test_post(self):
+        print 'test_post'
         pass
         # print 'test httputil.post()'
         # url = r'http://www.2kdy.com/search.asp'
@@ -46,16 +49,15 @@ class TestHttputil(unittest.TestCase):
         os.remove('tmp')
 
     def test_miniaxel(self):
+        print 'test_miniaxel'
         multi = r'test_multi'
         single = r'test_single'
         multi_md5 = singl_md5 = ''
         try:
             progress_bar = httputil.ProgressBar()
             axel = httputil.MiniAxel(progress_bar=progress_bar)
-            with open(multi, 'w') as fp:
-                axel.dl(TestHttputil.url, fp=fp, n=9)
-            with open(single, 'w') as fp:
-                axel.dl(TestHttputil.url, fp=fp, n=1)
+            axel.dl(TestHttputil.url, out=multi, n=9)
+            axel.dl(TestHttputil.url, out=single, n=1)
             with open(multi, 'rb') as fp:
                 multi_md5 = util.md5_for_file(fp)
                 print multi_md5
@@ -74,11 +76,13 @@ class TestHttputil(unittest.TestCase):
 
 class TestUtil(unittest.TestCase):
     def test_assure_path(self):
+        print 'test_assure_path'
         tmp_path = r'/Users/pk/tmp/a/b/c/d'
         util.assure_path(tmp_path)
         self.assertTrue(os.path.exists(tmp_path))
 
     def test_check_cmd(self):
+        print 'test_check_cmd'
         self.assertTrue(util.check_cmd('axel'))
         self.assertTrue(not util.check_cmd('XXXXX'))
         self.assertTrue(util.check_cmd('ls'))
