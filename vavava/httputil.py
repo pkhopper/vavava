@@ -119,9 +119,11 @@ class DownloadStreamHandler:
             if self.end_at and self.start_at >= self.end_at:
                 break
             data = resp.read(self.buffer_size)
-            data_len = len(data)
             if not data:
                 break
+            data_len = len(data)
+            # if data_len < self.buffer_size:
+            #     print 'start=%d,len=%d, end=%d' % (self.start_at, data_len, self.start_at + data_len)
             if self.mutex:
                 with self.mutex:
                     if not self.fp.closed:
@@ -382,17 +384,19 @@ class HistoryFile:
 if __name__ == "__main__":
     import util
     urls = {
-        # 'a842b6798d0d73118b67ce5949dfe32c': 'http://localhost/w/dl/20140727223402.ts',
-        # 'a5f14ba1b9700d6cff3040f7445b30e9': 'http://localhost/w/dl/20140728013628.ts',
+        '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
         '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     }
     progress_bar = ProgressBar()
     axel = MiniAxel(progress_bar=progress_bar, retransmission=True)
     try:
         for name, url in urls.items():
-            axel.dl(url, out=name, n=4)
+            axel.dl(url, out=name, n=1)
             with open(name, 'rb') as fp:
-                assert name == util.md5_for_file(fp)
+                ss = util.md5_for_file(fp)
+                if name != ss:
+                    print 'assert name == util.md5_for_file(fp)',
+                assert ss == name
             os.remove(name)
     except Exception as e:
         print e

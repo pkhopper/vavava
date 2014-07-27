@@ -80,13 +80,13 @@ class TestHttputil(unittest.TestCase):
 class TestUtil(unittest.TestCase):
     def test_assure_path(self):
         print 'test_assure_path'
-        tmp_path = r'/Users/pk/tmp/a/b/c/d'
+        tmp_path = r'./tmp/a/b/c/d'
         util.assure_path(tmp_path)
         self.assertTrue(os.path.exists(tmp_path))
 
     def test_check_cmd(self):
         print 'test_check_cmd'
-        self.assertTrue(util.check_cmd('axel'))
+        self.assertTrue(util.check_cmd('ls'))
         self.assertTrue(not util.check_cmd('XXXXX'))
         self.assertTrue(util.check_cmd('ls'))
 
