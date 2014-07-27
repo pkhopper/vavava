@@ -170,9 +170,9 @@ class MiniAxel(HttpUtil):
 
     def dl(self, url, fp, headers=None, n=5):
         assert n > 0
-        if n == 1:
-            self.fetch(url, DownloadStreamHandler(fp), headers=headers)
-            return
+        # if n == 1:
+        #     self.fetch(url, DownloadStreamHandler(fp), headers=headers)
+        #     return
         self.response = self._request(url)
         # assert self.response.code == 200
         info = self.response.info()
