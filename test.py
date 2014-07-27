@@ -60,9 +60,12 @@ class TestHttputil(unittest.TestCase):
             axel.dl(TestHttputil.url, out=single, n=1)
             with open(multi, 'rb') as fp:
                 multi_md5 = util.md5_for_file(fp)
+                print ''
                 print multi_md5
             with open(single, 'rb') as fp:
                 singl_md5 = util.md5_for_file(fp)
+                print ''
+                print singl_md5
         except Exception as e:
             print e
         finally:

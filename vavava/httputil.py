@@ -172,6 +172,7 @@ class MiniAxel(HttpUtil):
         self.progress_bar = progress_bar
         self.retransmission = retransmission
         self.history_file = None
+        self.mgr = None
 
     def dl(self, url, out, headers=None, n=5):
         if isinstance(out, file):
@@ -381,8 +382,8 @@ class HistoryFile:
 if __name__ == "__main__":
     import util
     urls = {
-        'a842b6798d0d73118b67ce5949dfe32c': 'http://localhost/w/dl/20140727223402.ts',
-        'a5f14ba1b9700d6cff3040f7445b30e9': 'http://localhost/w/dl/20140728013628.ts',
+        # 'a842b6798d0d73118b67ce5949dfe32c': 'http://localhost/w/dl/20140727223402.ts',
+        # 'a5f14ba1b9700d6cff3040f7445b30e9': 'http://localhost/w/dl/20140728013628.ts',
         '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     }
     progress_bar = ProgressBar()
@@ -393,5 +394,6 @@ if __name__ == "__main__":
             with open(name, 'rb') as fp:
                 assert name == util.md5_for_file(fp)
             os.remove(name)
-    except:
-        axel.stop_dl()
+    except Exception as e:
+        print e
+        pass
