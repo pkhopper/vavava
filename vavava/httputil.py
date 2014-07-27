@@ -1,26 +1,32 @@
 #!/usr/bin/env python
 # coding=utf-8
 
+import sys
+import os
+import gzip
+import zlib
 import urllib
 import urllib2
 import cookielib
 from io import BytesIO
 from time import time as _time
-from threading import Thread as _Thread, Event as _Event, Lock as _Lock
+from threading import Event as _Event
+from threading import Lock as _Lock
 from socket import timeout as _socket_timeout
+import threadpool
 
 DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows; U; Windows NT 6.1; ' \
                      'en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
 DEFAULT_REFERER = "http://www.baidu.com/"
-DEFAULT_BUFFER_SIZE = 1024*1024
+DEFAULT_BUFFER_SIZE = 1024*512
 DEFAULT_CHARSET = "utf8"
-DEFAULT_TIMEOUT = 30 #MS
+DEFAULT_TIMEOUT = 30  # MS
 DEFAULT_DEBUG_LVL = 0
+
 
 class HttpUtil(object):
     """ a simple client of http"""
-    def __init__(self, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
-                 debug_lvl=DEFAULT_DEBUG_LVL, proxy=None, log=None):
+    def __init__(self, timeout=DEFAULT_TIMEOUT, debug_lvl=DEFAULT_DEBUG_LVL, proxy=None):
         self._cookie = cookielib.CookieJar()
         self._timeout = timeout
         self._proxy = proxy
@@ -28,8 +34,7 @@ class HttpUtil(object):
         self._buffer_size = DEFAULT_BUFFER_SIZE
         self._charset = DEFAULT_CHARSET
         self._set_debug_level(debug_lvl)
-        self._headers = {}
-        self._headers['Referer'] = DEFAULT_REFERER
+        self._headers = {'Referer': DEFAULT_REFERER}
         self._headers['User-Agent'] = DEFAULT_USER_AGENT
         self._headers['Connection'] = 'keep-alive'
         self._headers['Accept'] = r'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
@@ -40,14 +45,13 @@ class HttpUtil(object):
         return self.response.read()
 
     def post(self, url, post_dic, headers=None):
-        self.response = self._request(url, headers=headers,
-            post_data=urllib.urlencode(post_dic).encode(self._charset)
-        )
+        post_data = urllib.urlencode(post_dic).encode(self._charset)
+        self.response = self._request(url, headers=headers, post_data=post_data)
         return self.response.read()
 
     def fetch(self, url, handler, post_data=None, headers=None):
         if handler is None:
-            raise ValueError, "need handler"
+            raise ValueError("need handler")
         handler.set_parent(self)
         resp = self._request(url, post_data=post_data, headers=headers)
         handler.handle(req=None, resp=resp)
@@ -74,9 +78,9 @@ class HttpUtil(object):
     def _request(self, url, post_data=None, headers=None):
         if self._opener is None:
             self._opener = urllib2.build_opener(ContentEncodingProcessor())
-        if self._cookie != None:
+        if self._cookie is not None:
             self._opener.add_handler(urllib2.HTTPCookieProcessor(self._cookie))
-        if self._proxy != None:
+        if self._proxy is not None:
             self._opener.add_handler(urllib2.ProxyHandler(self._proxy))
         if headers:
             for k, v in self._headers.items():
@@ -89,17 +93,17 @@ class HttpUtil(object):
 
 
 class DownloadStreamHandler:
-    def __init__(self, fp, duration=0, start=None, end=None,
-                 mutex=None, progress_bar=None):
+    def __init__(self, fp, duration=0, start_at=None, end_at=None,
+                 mutex=None, callback=None):
         self.parent = None
-        self.start = start
-        self.end = end
+        self.start_at = start_at
+        self.end_at = end_at
         self.fp = fp
         self.duration = duration
         self.ev = _Event()
-        self.stop = self.syn_stop = lambda :self.ev.set()
+        self.stop = self.syn_stop = lambda: self.ev.set()
         self.mutex = mutex
-        self.progress_bar = progress_bar
+        self.callback = callback
         if duration > 0:
             self.stop_time = duration + _time()
 
@@ -111,25 +115,23 @@ class DownloadStreamHandler:
         while not self.ev.is_set():
             if self.duration > 0 and self.stop_time <= _time():
                 break
-            if self.start and self.start >= self.end:
+            if self.start_at and self.start_at >= self.end_at:
                 break
             data = resp.read(DEFAULT_BUFFER_SIZE)
-            data_len = len(data)
             if not data:
                 break
             if self.mutex:
                 with self.mutex:
-                    self.fp.seek(self.start)
-                    self.start += data_len
-                    self.fp.write(data)
-            else:
+                    if not self.fp.closed:
+                        self.fp.seek(self.start_at)
+                        self.start_at += len(data)
+                        self.fp.write(data)
+            elif not self.fp.closed:
                 self.fp.write(data)
-            if self.progress_bar:
-                self.progress_bar.update(data_len)
+            if self.callback:
+                self.callback(self.start_at - len(data), data)
 
 
-import gzip
-import zlib
 class ContentEncodingProcessor(urllib2.BaseHandler):
     """A handler to add gzip capabilities to urllib2 requests """
     # add headers to requests
@@ -147,24 +149,24 @@ class ContentEncodingProcessor(urllib2.BaseHandler):
     def http_response(self, req, resp):
         old_resp = resp
         if resp.headers.get("content-encoding") == "gzip":
-            gz = gzip.GzipFile( fileobj=BytesIO(resp.read()), mode="r" )
+            gz = gzip.GzipFile(fileobj=BytesIO(resp.read()), mode="r")
             resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
             resp.msg = old_resp.msg
             # deflate
         if resp.headers.get("content-encoding") == "deflate":
-            gz = BytesIO( self.deflate(resp.read()) )
+            gz = BytesIO(self.deflate(resp.read()))
             resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
             resp.msg = old_resp.msg
         return resp
 
 
 class MiniAxel(HttpUtil):
-    def __init__(self, progress_bar=None, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
-                 debug_lvl=DEFAULT_DEBUG_LVL, proxy=None, log=None):
-        HttpUtil.__init__(self, charset=DEFAULT_CHARSET, timeout=DEFAULT_TIMEOUT,
-                 debug_lvl=DEFAULT_DEBUG_LVL, proxy=proxy, log=log)
+    def __init__(self, progress_bar=None, retransmission=True, timeout=DEFAULT_TIMEOUT,
+                 debug_lvl=DEFAULT_DEBUG_LVL, proxy=None):
+        HttpUtil.__init__(self, timeout=timeout, debug_lvl=debug_lvl, proxy=proxy)
         self.threads = []
         self.progress_bar = progress_bar
+        self.retransmission = retransmission
 
     def dl(self, url, fp, headers=None, n=5):
         assert n > 0
@@ -172,7 +174,7 @@ class MiniAxel(HttpUtil):
             self.fetch(url, DownloadStreamHandler(fp), headers=headers)
             return
         self.response = self._request(url)
-        assert self.response.code == 200
+        # assert self.response.code == 200
         info = self.response.info()
         size = int(info.getheaders('Content-Length')[0])
         assert info.getheaders('Accept-Ranges')[0] == 'bytes'
@@ -182,66 +184,69 @@ class MiniAxel(HttpUtil):
             clips.append((i*clip_size, i*clip_size+clip_size-1))
         clips.append(((n-1)*clip_size, size))
         mutex = _Lock()
+        cur_size = 0
+        if self.retransmission:
+            self.history_file = HistoryFile(fp.name)
+            clips, cur_size = self.history_file.reindex(clips, size)
         if self.progress_bar:
-            self.progress_bar.set_size(size)
-            self.progress_bar.reset()
+            self.progress_bar.reset(size, cur_size)
+        self.mgr = threadpool.ThreadManager()
         for clip in clips:
-            thread = MiniAxel.DownloadThread(
-                url=url, fp=fp, start=clip[0], end=clip[1], mutex=mutex,
-                progress_bar=self.progress_bar
-            )
-            self.threads.append(thread)
-        self.join()
+            thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0],
+                                             end_at=clip[1], mutex=mutex,
+                                             callback=self.__callback)
+            self.mgr.addThreads([thread])
+        try:
+            self.mgr.startAll()
+            while self.mgr.isWorking():
+                self.mgr.joinAll(timeout=1)
+                if self.progress_bar:
+                    self.progress_bar.display()
+                if self.history_file:
+                    self.history_file.update_file()
+            if self.progress_bar:
+                self.progress_bar.display(force=True)
+            if self.history_file:
+                self.history_file.clean()
+        except :
+            self.mgr.stopAll()
+            self.mgr.joinAll()
+            if self.history_file:
+                self.history_file.update_file(force=True)
+
+    def __callback(self, offset, data):
         if self.progress_bar:
-            self.progress_bar.display(force=True)
+            self.progress_bar.update(len(data))
+        if self.history_file:
+            self.history_file.update(offset, len(data))
 
     def stop(self):
-        for thread in self.threads:
-            thread.stop()
+        self.mgr.stopAll()
+        self.mgr.joinAll()
 
-    def join(self):
-        finished = []
-        thread_num = len(self.threads)
-        try:
-            if not self.progress_bar:
-                for thread in self.threads:
-                    thread.join()
-                return
-            while len(finished) < thread_num:
-                for thread in self.threads:
-                    if thread not in finished:
-                        if thread.thread.isAlive():
-                            thread.join(timeout=1)
-                            self.progress_bar.display()
-                        else:
-                            finished.append(thread)
-        except KeyboardInterrupt as e:
-            for thread in self.threads:
-                if thread not in finished:
-                    thread.download_handle.stop()
-                    thread.join()
-
-    class DownloadThread:
-        def __init__(self, url, fp, start, end, mutex,
-                     progress_bar=None, headers=None, log=None):
+    class DownloadThread(threadpool.ThreadBase):
+        def __init__(self, url, fp, start_at, end_at, mutex,
+                     callback=None, headers=None, log=None):
+            threadpool.ThreadBase.__init__(self)
             self.url = url
             self.fp = fp
-            self.start = start
-            self.end = end
+            self.start_at = start_at
+            self.end_at = end_at
             self.mutex = mutex
+            self.callback = callback
             self.headers = headers
             self.log = log
-            self.download_handle = DownloadStreamHandler(
-                fp=self.fp, duration=0, start=self.start, end=self.end,
-                mutex=self.mutex, progress_bar=progress_bar)
-            self.stop = self.download_handle.syn_stop
-            self.thread = _Thread(target=self._run)
-            self.join = self.thread.join
-            self.thread.start()
+            self.download_handle = DownloadStreamHandler(fp=self.fp, duration=0,
+                                                         start_at=self.start_at, end_at=self.end_at,
+                                                         mutex=self.mutex, callback=self.callback)
 
-        def _run(self,*_args, **_kwargs):
+        def stop(self):
+            self.download_handle.stop()
+            threadpool.ThreadBase.stop(self)
+
+        def run(self):
             http = HttpUtil(timeout=6)
-            http.add_header('Range', 'bytes=%s-%s' % (self.start, self.end))
+            http.add_header('Range', 'bytes=%s-%s' % (self.start_at, self.end_at))
             while True:
                 try:
                     http.fetch(self.url, self.download_handle, headers=self.headers)
@@ -252,19 +257,16 @@ class MiniAxel(HttpUtil):
                     pass
 
 
-import sys
 class ProgressBar:
     def __init__(self, size=None):
-        self.set_size(size)
-        self.reset()
+        self.reset(size, 0)
         self.mutex = _Lock()
 
-    def reset(self):
-        self.cur_size = self.last_size = 0
+    def reset(self, total_size, cur_size):
+        self.size = total_size
+        self.cur_size = cur_size
+        self.last_size = 0
         self.last_updat = self.start = _time()
-
-    def set_size(self, size):
-        self.size = size
 
     def update(self, data_size):
         with self.mutex:
@@ -277,39 +279,98 @@ class ProgressBar:
         if not force and duration < 1:
             # print '*******%d-%d=%d'%(now, self.last_updat, duration)
             return
-        percentage = 0
-        output = '\r['
-        for i in xrange(20):
-            percentage = 5.0*self.cur_size/self.size
-            if i <= percentage:
-                output += '='
-            else:
-                output += '.'
-        output += r'] %.1d%%'%(percentage*10)
+        percentage = 10.0*self.cur_size/self.size
         speed = (self.cur_size - self.last_size)/duration
+        output_format = '\r[%3.1d%% %5.1dk/s][ %5.1ds/%5.1ds] [%dk/%dk]'
         if speed > 0:
-            output += ' %5.1dk %.1ds-%ds %dk/%dk       '%(
-                speed/1024, now - self.start,
-                (self.size-self.cur_size)*1024/speed,
-                self.cur_size/1024, self.size/1024
-            )
+            output = output_format % (percentage*10, speed/1024, now - self.start,
+                (self.size-self.cur_size)*1024/speed, self.cur_size/1024, self.size/1024)
         else:
             if self.cur_size == 0:
                 expect = 0
             else:
-                expect = (self.size-self.cur_size)*(now - self.start)/self.cur_size
-            output += ' 0k %.1ds-%ds %dk/%dk       '%(
-                now - self.start, expect, self.cur_size/1024, self.size/1024)
+                expect = (self.size - self.cur_size)*(now - self.start)/self.cur_size
+            output = output_format % (percentage*10, 0, now - self.start, expect,
+                                       self.cur_size/1024, self.size/1024)
         sys.stdout.write(output)
         sys.stdout.flush()
         self.last_updat = now
         self.last_size = self.cur_size
 
+
+class HistoryFile:
+    def __init__(self, target):
+        txt = os.path.abspath(target)
+        self.txt = txt + '.txt'
+        self.mutex = _Lock()
+        self.buffered = 0
+
+    def reindex(self, indexes, size):
+        if os.path.exists(self.txt):
+            self.indexes = []
+            with open(self.txt, 'r') as fp:
+                for num in fp.read().split('|'):
+                    if num.strip() != '':
+                        (a, b) = num.split(',')
+                        a, b = int(a), int(b)
+                        if a <= b:
+                            size -= b - a
+                            self.indexes.append((a, b))
+        else:
+            self.indexes = indexes
+            with open(self.txt, 'w') as fp:
+                for num in indexes:
+                    fp.write('%d,%d|'%num)
+            size = 0
+        return self.indexes, size
+
+    def update(self, offset, size):
+        assert size > 0
+        assert offset >=0
+        with self.mutex:
+            self.buffered += size
+            for i in xrange(len(self.indexes)):
+                a, b = self.indexes[i]
+                if a <= offset <= b:
+                    assert a+size <= b+1
+                    if a + size <= b + 1:
+                        self.indexes[i] = (a + size, b)
+                    break
+
+    def clean(self):
+        with self.mutex:
+            if os.path.exists(self.txt):
+                os.remove(self.txt)
+
+    def update_file(self, force=False):
+        str = ''
+        with self.mutex:
+            if not force and self.buffered < 1000*512:
+                return
+            self.buffered = 0
+            for (a, b) in self.indexes:
+                if a < b+1:
+                    str += '%d,%d|' % (a, b)
+                else:
+                    assert a <= b+1
+        with open(self.txt, 'w') as fp:
+            fp.write(str)
+
+
 if __name__ == "__main__":
+    import util
     url = r'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
+    orig_md5 = r'140c4a7c9735dd3006a877a9acca3c31'
+    filename = '140c4a7c9735dd3006a877a9acca3c31'
     progress_bar = ProgressBar()
     axel = MiniAxel(progress_bar=progress_bar)
-    with open('tmp', 'w') as fp:
-        axel.dl(url, fp=fp)
+    if not os.path.exists(filename):
+        with open(filename, 'w'):
+            pass
+    with open(filename, 'rb+') as fp:
+        if not fp.closed:
+            axel.dl(url, fp=fp)
+    with open(filename, 'rb') as fp:
+        assert orig_md5 == util.md5_for_file(fp)
     import os
-    os.remove('tmp')
+    os.remove(filename)
