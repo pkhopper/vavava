@@ -13,7 +13,7 @@ from time import time as _time
 from threading import Event as _Event
 from threading import Lock as _Lock
 from socket import timeout as _socket_timeout
-import threadpool
+import threadutil
 
 DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows; U; Windows NT 6.1; ' \
                      'en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6'
@@ -190,7 +190,7 @@ class MiniAxel(HttpUtil):
             clips, cur_size = self.history_file.reindex(clips, size)
         if self.progress_bar:
             self.progress_bar.reset(size, cur_size)
-        self.mgr = threadpool.ThreadManager()
+        self.mgr = threadutil.ThreadManager()
         for clip in clips:
             thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0],
                                              end_at=clip[1], mutex=mutex,
@@ -224,10 +224,10 @@ class MiniAxel(HttpUtil):
         self.mgr.stopAll()
         self.mgr.joinAll()
 
-    class DownloadThread(threadpool.ThreadBase):
+    class DownloadThread(threadutil.ThreadBase):
         def __init__(self, url, fp, start_at, end_at, mutex,
                      callback=None, headers=None, log=None):
-            threadpool.ThreadBase.__init__(self)
+            threadutil.ThreadBase.__init__(self)
             self.url = url
             self.fp = fp
             self.start_at = start_at
@@ -242,7 +242,7 @@ class MiniAxel(HttpUtil):
 
         def stop(self):
             self.download_handle.stop()
-            threadpool.ThreadBase.stop(self)
+            threadutil.ThreadBase.stop(self)
 
         def run(self):
             http = HttpUtil(timeout=6)
@@ -372,5 +372,4 @@ if __name__ == "__main__":
             axel.dl(url, fp=fp)
     with open(filename, 'rb') as fp:
         assert orig_md5 == util.md5_for_file(fp)
-    import os
     os.remove(filename)
