@@ -121,8 +121,18 @@ class DownloadStreamHandler:
         self.parent = p
 
     def handle(self, req, resp):
-        self.ev.clear()
         self.working = True
+        try:
+            self.__handle(req, resp)
+        except:
+            raise
+        finally:
+            if not self.ev.isSet():
+                self.ev.set()
+            self.working = False
+
+    def __handle(self, req, resp):
+        self.ev.clear()
         while not self.ev.is_set():
             if self.end_at and self.start_at >= self.end_at:
                 break
@@ -130,8 +140,6 @@ class DownloadStreamHandler:
             if not data:
                 break
             data_len = len(data)
-            # if data_len < self.buffer_size:
-            #     print 'start=%d,len=%d, end=%d' % (self.start_at, data_len, self.start_at + data_len)
             if self.mutex:
                 with self.mutex:
                     if not self.fp.closed:
@@ -144,7 +152,6 @@ class DownloadStreamHandler:
             if self.callback and not self.fp.closed:
                 if self.start_at > data_len:
                     self.callback(self.start_at - data_len, data_len)
-        self.working = False
 
 
 class ContentEncodingProcessor(urllib2.BaseHandler):
@@ -224,8 +231,10 @@ class MiniAxel(HttpUtil):
             self.mgr.addThreads([thread])
         try:
             self.mgr.startAll()
+            if self.progress_bar:
+                self.progress_bar.display(force=True)
             while self.mgr.isWorking():
-                self.mgr.joinAll(timeout=2)
+                self.mgr.joinAll(timeout=0.2)
                 if self.progress_bar:
                     self.progress_bar.display()
                 if self.history_file:
@@ -248,8 +257,9 @@ class MiniAxel(HttpUtil):
             self.history_file.update(offset, size=size)
 
     def terminate_dl(self):
-        self.mgr.stopAll()
-        self.mgr.joinAll()
+        if self.mgr:
+            self.mgr.stopAll()
+            self.mgr.joinAll()
 
     def set_proxy(self, proxy):
         """ proxy = {'http': 'localhost:123'} """
@@ -276,12 +286,6 @@ class MiniAxel(HttpUtil):
             if self.dl_handle:
                 self.dl_handle.stop_dl()
 
-        def join(self, timeout=None):
-            threadutil.ThreadBase.join(self, timeout=timeout)
-            if self.dl_handle:
-                self.dl_handle.wait_stop()
-
-
         def run(self):
             self.dl_handle = DownloadStreamHandler(fp=self.fp, start_at=self.start_at,
                           end_at=self.end_at, mutex=self.mutex, callback=self.callback)
@@ -295,10 +299,11 @@ class MiniAxel(HttpUtil):
                     if self.log:
                         self.log.exception(e)
                 except:
+                    raise
+                finally:
                     if self.dl_handle:
                         self.dl_handle.stop_dl()
                         self.dl_handle.wait_stop()
-                    raise
 
 
 class ProgressBar:
@@ -324,7 +329,10 @@ class ProgressBar:
             # print '*******%d-%d=%d'%(now, self.last_updat, duration)
             return
         percentage = 10.0*self.cur_size/self.size
-        speed = (self.cur_size - self.last_size)/duration
+        if duration == 0:
+            speed = 0
+        else:
+            speed = (self.cur_size - self.last_size)/duration
         output_format = '\r[%3.1d%% %5.1dk/s][ %5.1ds/%5.1ds] [%dk/%dk]            '
         if speed > 0:
             output = output_format % (percentage*10, speed/1024, now - self.start,
