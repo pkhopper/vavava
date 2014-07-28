@@ -42,6 +42,7 @@ class ThreadManager:
         self.started = False
         self.log = log
         self.mutex = threading.Lock()
+        self.msg_queue = Queue.Queue()
 
     def addThreads(self, threads):
         assert threads

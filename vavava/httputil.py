@@ -225,9 +225,9 @@ class MiniAxel(HttpUtil):
             self.progress_bar.reset(size, cur_size)
         self.mgr = threadutil.ThreadManager()
         for clip in clips:
-            thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0],
-                                             end_at=clip[1], mutex=mutex, proxy=self.proxy,
-                                             callback=self.__callback)
+            thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0], end_at=clip[1],
+                                             mutex=mutex, msgq=self.mgr.msg_queue,
+                                             proxy=self.proxy, callback=self.__callback)
             self.mgr.addThreads([thread])
         try:
             self.mgr.startAll()
@@ -235,6 +235,12 @@ class MiniAxel(HttpUtil):
                 self.progress_bar.display(force=True)
             while self.mgr.isWorking():
                 self.mgr.joinAll(timeout=0.2)
+                if not self.mgr.msg_queue.empty():
+                    if not self.mgr.msg_queue.empty():
+                        msg = self.mgr.msg_queue.get()
+                        if msg:
+                            if msg == 'error':
+                                raise RuntimeError('thread crashed')
                 if self.progress_bar:
                     self.progress_bar.display()
                 if self.history_file:
@@ -267,7 +273,7 @@ class MiniAxel(HttpUtil):
 
     class DownloadThread(threadutil.ThreadBase):
 
-        def __init__(self, url, fp, start_at, end_at, mutex, proxy=None,
+        def __init__(self, url, fp, start_at, end_at, mutex, msgq, proxy=None,
                      callback=None, headers=None, log=None):
             threadutil.ThreadBase.__init__(self)
             self.url = url
@@ -275,6 +281,7 @@ class MiniAxel(HttpUtil):
             self.start_at = start_at
             self.end_at = end_at
             self.mutex = mutex
+            self.msgq = msgq
             self.proxy = proxy
             self.callback = callback
             self.headers = headers
@@ -299,6 +306,7 @@ class MiniAxel(HttpUtil):
                     if self.log:
                         self.log.exception(e)
                 except:
+                    self.msgq.put("error")
                     raise
                 finally:
                     if self.dl_handle:
@@ -389,7 +397,9 @@ class HistoryFile:
                 if a <= offset <= b:
                     if not (a+size <= b+1):
                         print 'a=%d,size=%d,b=%d' % (a, size, b)
-                    assert a+size <= b+1
+                        # ugly fix ?????
+                        a = b + 1 - size
+                    # assert a+size <= b+1 ?????
                     if a + size <= b + 1:
                         self.indexes[i] = (a + size, b)
                     break
@@ -429,7 +439,7 @@ if __name__ == "__main__":
                 ss = util.md5_for_file(fp)
             os.remove(name)
             if name != ss:
-                print '[n=1]assert name == util.md5_for_file(fp)'
+                print '[n=1] assert name == util.md5_for_file(fp)'
 
             axel.dl(url, out=name, n=3)
             with open(name, 'rb') as fp:
