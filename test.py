@@ -41,12 +41,12 @@ class TestHttputil(unittest.TestCase):
         print 'test httputil.fetch()'
         client = httputil.HttpUtil()
         #client.set_proxy({"http":"http://127.0.0.1:8087"})
-        with open('tmp', 'w') as fp:
-            handle = httputil.DownloadStreamHandler(fp, duration=30)
+        with open(TestHttputil.orig_md5, 'w') as fp:
+            handle = httputil.DownloadStreamHandler(fp)
             client.fetch(TestHttputil.url, handle)
-        with open('tmp', 'r') as fp:
+        with open(TestHttputil.orig_md5, 'r') as fp:
             self.assertTrue(TestHttputil.orig_md5 == util.md5_for_file(fp))
-        os.remove('tmp')
+        os.remove(TestHttputil.orig_md5)
 
     def test_miniaxel(self):
         print 'test_miniaxel'

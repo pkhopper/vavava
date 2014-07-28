@@ -93,29 +93,37 @@ class HttpUtil(object):
 
 
 class DownloadStreamHandler:
-    def __init__(self, fp, duration=0, start_at=0, end_at=None,
-                 mutex=None, buffer_size=BUFFER_SIZE, callback=None):
+    def __init__(self, fp, start_at=0, end_at=None, mutex=None,
+                 buffer_size=BUFFER_SIZE, callback=None):
         self.parent = None
         self.start_at = start_at
         self.end_at = end_at
         self.fp = fp
-        self.duration = duration
         self.ev = _Event()
-        self.stop = self.syn_stop = lambda: self.ev.set()
         self.mutex = mutex
         self.buffer_size = buffer_size
         self.callback = callback
-        if duration > 0:
-            self.stop_time = duration + _time()
+        self.working = False
+
+    def stop_dl(self):
+        self.ev.set()
+
+    def wait_stop(self, timeout=TIMEOUT):
+        assert timeout
+        import time
+        while self.working:
+            time.sleep(0.5)
+            if timeout < 0:
+                raise RuntimeError('is_stop timeout')
+            timeout -= 0.5
 
     def set_parent(self, p):
         self.parent = p
 
     def handle(self, req, resp):
         self.ev.clear()
+        self.working = True
         while not self.ev.is_set():
-            if self.duration > 0 and self.stop_time <= _time():
-                break
             if self.end_at and self.start_at >= self.end_at:
                 break
             data = resp.read(self.buffer_size)
@@ -136,6 +144,7 @@ class DownloadStreamHandler:
             if self.callback and not self.fp.closed:
                 if self.start_at > data_len:
                     self.callback(self.start_at - data_len, data_len)
+        self.working = False
 
 
 class ContentEncodingProcessor(urllib2.BaseHandler):
@@ -175,6 +184,7 @@ class MiniAxel(HttpUtil):
         self.retransmission = retransmission
         self.history_file = None
         self.mgr = None
+        self.proxy = None
 
     def dl(self, url, out, headers=None, n=5):
         if isinstance(out, file):
@@ -209,7 +219,7 @@ class MiniAxel(HttpUtil):
         self.mgr = threadutil.ThreadManager()
         for clip in clips:
             thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0],
-                                             end_at=clip[1], mutex=mutex,
+                                             end_at=clip[1], mutex=mutex, proxy=self.proxy,
                                              callback=self.__callback)
             self.mgr.addThreads([thread])
         try:
@@ -237,12 +247,17 @@ class MiniAxel(HttpUtil):
         if self.history_file:
             self.history_file.update(offset, size=size)
 
-    def stop_dl(self):
+    def terminate_dl(self):
         self.mgr.stopAll()
         self.mgr.joinAll()
 
+    def set_proxy(self, proxy):
+        """ proxy = {'http': 'localhost:123'} """
+        self.proxy = proxy
+
     class DownloadThread(threadutil.ThreadBase):
-        def __init__(self, url, fp, start_at, end_at, mutex,
+
+        def __init__(self, url, fp, start_at, end_at, mutex, proxy=None,
                      callback=None, headers=None, log=None):
             threadutil.ThreadBase.__init__(self)
             self.url = url
@@ -250,30 +265,40 @@ class MiniAxel(HttpUtil):
             self.start_at = start_at
             self.end_at = end_at
             self.mutex = mutex
+            self.proxy = proxy
             self.callback = callback
             self.headers = headers
             self.log = log
             self.dl_handle = None
 
         def stop(self):
-            if self.dl_handle:
-                self.dl_handle.stop()
             threadutil.ThreadBase.stop(self)
+            if self.dl_handle:
+                self.dl_handle.stop_dl()
+
+        def join(self, timeout=None):
+            threadutil.ThreadBase.join(self, timeout=timeout)
+            if self.dl_handle:
+                self.dl_handle.wait_stop()
+
 
         def run(self):
-            self.dl_handle = DownloadStreamHandler(fp=self.fp, duration=0,
-                                                   start_at=self.start_at, end_at=self.end_at,
-                                                   mutex=self.mutex, callback=self.callback)
-            http = HttpUtil(timeout=6)
+            self.dl_handle = DownloadStreamHandler(fp=self.fp, start_at=self.start_at,
+                          end_at=self.end_at, mutex=self.mutex, callback=self.callback)
+            http = HttpUtil(timeout=6, proxy=self.proxy)
             http.add_header('Range', 'bytes=%s-%s' % (self.start_at, self.end_at))
-            while True:
+            while not self.isSetToStop():
                 try:
-                    http.fetch(self.url, self.dl_handle, headers=self.headers)
+                    http.fetch(self.url, handler=self.dl_handle, headers=self.headers)
                     return
                 except _socket_timeout as e:
                     if self.log:
                         self.log.exception(e)
-                    pass
+                except:
+                    if self.dl_handle:
+                        self.dl_handle.stop_dl()
+                        self.dl_handle.wait_stop()
+                    raise
 
 
 class ProgressBar:
