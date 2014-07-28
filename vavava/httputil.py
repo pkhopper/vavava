@@ -417,20 +417,29 @@ class HistoryFile:
 if __name__ == "__main__":
     import util
     urls = {
-        '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
+        # '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
         '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     }
     progress_bar = ProgressBar()
     axel = MiniAxel(progress_bar=progress_bar, retransmission=True)
-    try:
-        for name, url in urls.items():
+    for name, url in urls.items():
+        try:
             axel.dl(url, out=name, n=1)
             with open(name, 'rb') as fp:
                 ss = util.md5_for_file(fp)
-                if name != ss:
-                    print 'assert name == util.md5_for_file(fp)',
-                assert ss == name
             os.remove(name)
-    except Exception as e:
-        print e
-        pass
+            if name != ss:
+                print '[n=1]assert name == util.md5_for_file(fp)'
+
+            axel.dl(url, out=name, n=3)
+            with open(name, 'rb') as fp:
+                ss = util.md5_for_file(fp)
+            os.remove(name)
+            if name != ss:
+                print '[n=3] assert name == util.md5_for_file(fp)'
+        except Exception as e:
+            print e
+            raise
+        finally:
+            if os.path.exists(name):
+                os.remove(name)
