@@ -144,11 +144,13 @@ class DownloadStreamHandler:
                 with self.mutex:
                     if not self.fp.closed:
                         self.fp.seek(self.start_at)
+                        if self.start_at + data_len > self.end_at + 1:
+                            print '|||||===> len=%d,start=%d,end=%d' % (data_len, self.start_at, self.end_at)
+                            data_len = self.end_at - self.start_at + 1
+                            self.fp.write(data[:data_len])
+                        else:
+                            self.fp.write(data)
                         self.start_at += data_len
-                        self.fp.write(data)
-            elif not self.fp.closed:
-                self.start_at += data_len
-                self.fp.write(data)
             if self.callback and not self.fp.closed:
                 if self.start_at > data_len:
                     self.callback(self.start_at - data_len, data_len)
@@ -236,11 +238,10 @@ class MiniAxel(HttpUtil):
             while self.mgr.isWorking():
                 self.mgr.joinAll(timeout=0.2)
                 if not self.mgr.msg_queue.empty():
-                    if not self.mgr.msg_queue.empty():
-                        msg = self.mgr.msg_queue.get()
-                        if msg:
-                            if msg == 'error':
-                                raise RuntimeError('thread crashed')
+                    msg = self.mgr.msg_queue.get()
+                    if msg:
+                        if msg == 'error':
+                            raise RuntimeError('thread crashed')
                 if self.progress_bar:
                     self.progress_bar.display()
                 if self.history_file:
