@@ -56,6 +56,16 @@ class HttpUtil(object):
         resp = self._request(url, post_data=post_data, headers=headers)
         handler.handle(req=None, resp=resp)
 
+    def head(self, url):
+        import httplib
+        from urlparse import urlparse
+        parts = urlparse(url)
+        con = httplib.HTTPConnection(parts.netloc, timeout=self._timeout)
+        con.request('HEAD', parts.path)
+        res = con.getresponse()
+        con.close()
+        return res
+
     def parse_charset(self):
         if self.response:
             import re
@@ -92,17 +102,18 @@ class HttpUtil(object):
         return self._opener.open(req, timeout=self._timeout)
 
 
-class DownloadStreamHandler:
-    def __init__(self, fp, start_at=0, end_at=None, mutex=None,
-                 buffer_size=BUFFER_SIZE, callback=None):
+class HttpDownloadClipHandler:
+
+    def __init__(self, fp, range=None, mutex=None,
+                 buffer_size=BUFFER_SIZE, callback=None, log=None):
         self.parent = None
-        self.start_at = start_at
-        self.end_at = end_at
+        self.range = range
         self.fp = fp
         self.ev = _Event()
         self.mutex = mutex
         self.buffer_size = buffer_size
         self.callback = callback
+        self.log = log
         self.working = False
 
     def stop_dl(self):
@@ -123,7 +134,10 @@ class DownloadStreamHandler:
     def handle(self, req, resp):
         self.working = True
         try:
-            self.__handle(req, resp)
+            if self.range:
+                self.__handle_clip(req, resp)
+            else:
+                self.__handle_all(req, resp)
         except:
             raise
         finally:
@@ -131,32 +145,55 @@ class DownloadStreamHandler:
                 self.ev.set()
             self.working = False
 
-    def __handle(self, req, resp):
+    def __handle_all(self, req, resp):
         self.ev.clear()
-        content_range = 'bytes %d-%d' % (self.start_at, self.end_at)
-        if not resp.headers['content-range'].startswith(content_range):
-            pass
+        size = int(resp.info().getheader('Content-Length'))
+        assert resp.info().getheader('Accept-Ranges') == 'bytes'
+        offset = 0
         while not self.ev.is_set():
-            if self.end_at and self.start_at >= self.end_at:
-                break
             data = resp.read(self.buffer_size)
             if not data:
                 break
             data_len = len(data)
+            if not self.fp.closed:
+                self.fp.write(data)
+            if self.callback and not self.fp.closed:
+                self.callback(offset, data_len)
+            offset += data_len
+        assert offset == size
+
+    def __handle_clip(self, req, resp):
+        self.ev.clear()
+        start_at, end_at = self.range
+        content_range = 'bytes %d-%d' % self.range
+        assert resp.headers['content-range'].startswith(content_range)
+        # offset pointed at a new position, [0, --)
+        offset = start_at
+        if resp.code not in (200, 206):
+            if self.log:
+                self.log.error('code=%d', resp.code)
+                self.log.error(resp.headers)
+        while not self.ev.is_set():
+            data = resp.read(self.buffer_size)
+            if not data:
+                break
+            data_len = len(data)
+            if offset + data_len > end_at + 1:
+                if self.log:
+                    self.log.error('|||||===> len=%d,offset=%d,end=%d', data_len, offset, end_at)
             if self.mutex:
                 with self.mutex:
                     if not self.fp.closed:
-                        self.fp.seek(self.start_at)
-                        if self.start_at + data_len > self.end_at + 1:
-                            print '|||||===> len=%d,start=%d,end=%d' % (data_len, self.start_at, self.end_at)
-                            data_len = self.end_at - self.start_at + 1
-                            self.fp.write(data[:data_len])
-                        else:
-                            self.fp.write(data)
-                        self.start_at += data_len
+                        self.fp.seek(offset)
+                        self.fp.write(data)
+                    else:
+                        assert False
             if self.callback and not self.fp.closed:
-                if self.start_at > data_len:
-                    self.callback(self.start_at - data_len, data_len)
+                self.callback(offset, data_len)
+            offset += data_len
+        # if self.log:
+        #     self.log.debug('clip end, offset=%d, end=%d', offset, end_at)
+        assert offset == end_at + 1
 
 
 class ContentEncodingProcessor(urllib2.BaseHandler):
@@ -188,15 +225,16 @@ class ContentEncodingProcessor(urllib2.BaseHandler):
 
 
 class MiniAxel(HttpUtil):
-    def __init__(self, progress_bar=None, retransmission=False,
-                 timeout=TIMEOUT, debug_lvl=DEBUG_LVL, proxy=None):
+    def __init__(self, progress_bar=None, retrans=False, timeout=TIMEOUT,
+                 debug_lvl=DEBUG_LVL, proxy=None, log=None):
         HttpUtil.__init__(self, timeout=timeout, debug_lvl=debug_lvl, proxy=proxy)
         self.threads = []
         self.progress_bar = progress_bar
-        self.retransmission = retransmission
+        self.retransmission = retrans
         self.history_file = None
         self.mgr = None
         self.proxy = None
+        self.log = log
 
     def dl(self, url, out, headers=None, n=5):
         if isinstance(out, file):
@@ -208,36 +246,42 @@ class MiniAxel(HttpUtil):
             with open(out, 'wb') as fp:
                 self.__dl(url, fp, headers=headers, n=n)
 
+    def __head(self, url):
+        info = HttpUtil().head(url)
+        try:
+            size = int(info.getheader('Content-Length'))
+            assert info.getheader('Accept-Ranges') == 'bytes'
+        except:
+            return None
+        return size
+
     def __dl(self, url, fp, headers=None, n=5):
         assert n > 0
         assert url
-        self.response = self._request(url)
-        # assert self.response.code == 200
-        info = self.response.info()
-        size = int(info.getheaders('Content-Length')[0])
-        assert info.getheaders('Accept-Ranges')[0] == 'bytes'
-        clips = []
-        clip_size = size/n
-        for i in xrange(0, n-1):
-            clips.append((i*clip_size, i*clip_size+clip_size-1))
-        clips.append(((n-1)*clip_size, size-1))
+        self.mgr = threadutil.ThreadManager()
         mutex = _Lock()
         cur_size = 0
+        size = self.__head(url)
+        clips = self.__div_file(size, n)
         if self.retransmission:
             self.history_file = HistoryFile(fp.name)
-            clips, cur_size = self.history_file.reindex(clips, size)
+            clips, cur_size = self.history_file.mk_clips(clips, size)
         if self.progress_bar:
             self.progress_bar.reset(size, cur_size)
-        self.mgr = threadutil.ThreadManager()
+
+        if clips is None or size == 0:
+            clips = [None]
         for clip in clips:
-            thread = MiniAxel.DownloadThread(url=url, fp=fp, start_at=clip[0], end_at=clip[1],
-                                             mutex=mutex, msgq=self.mgr.msg_queue,
-                                             proxy=self.proxy, callback=self.__callback)
+            thread = MiniAxel.DownloadThread(url=url, fp=fp, range=clip, mutex=mutex,
+                                             msgq=self.mgr.msg_queue, proxy=self.proxy,
+                                             callback=self.__callback, log=self.log)
             self.mgr.addThreads([thread])
+
         try:
             self.mgr.startAll()
             if self.progress_bar:
                 self.progress_bar.display(force=True)
+
             while self.mgr.isWorking():
                 self.mgr.joinAll(timeout=0.2)
                 if not self.mgr.msg_queue.empty():
@@ -249,6 +293,7 @@ class MiniAxel(HttpUtil):
                     self.progress_bar.display()
                 if self.history_file:
                     self.history_file.update_file()
+
             if self.progress_bar:
                 self.progress_bar.display(force=True)
             if self.history_file:
@@ -259,6 +304,15 @@ class MiniAxel(HttpUtil):
             if self.history_file:
                 self.history_file.update_file(force=True)
             raise
+
+    def __div_file(self, size, n):
+        minsize = 1024
+        if n == 1 or size <= minsize:
+            return None
+        clip_size = size/n
+        clips = [(i*clip_size, i*clip_size+clip_size-1) for i in xrange(0, n-1)]
+        clips.append(((n-1)*clip_size, size-1))
+        return clips
 
     def __callback(self, offset, size):
         if self.progress_bar:
@@ -277,13 +331,12 @@ class MiniAxel(HttpUtil):
 
     class DownloadThread(threadutil.ThreadBase):
 
-        def __init__(self, url, fp, start_at, end_at, mutex, msgq, proxy=None,
-                     callback=None, headers=None, log=None):
+        def __init__(self, url, fp, range=None, headers=None, mutex=None,
+                     msgq=None, proxy=None, callback=None, log=None):
             threadutil.ThreadBase.__init__(self)
             self.url = url
             self.fp = fp
-            self.start_at = start_at
-            self.end_at = end_at
+            self.range = range
             self.mutex = mutex
             self.msgq = msgq
             self.proxy = proxy
@@ -298,10 +351,11 @@ class MiniAxel(HttpUtil):
                 self.dl_handle.stop_dl()
 
         def run(self):
-            self.dl_handle = DownloadStreamHandler(fp=self.fp, start_at=self.start_at,
-                          end_at=self.end_at, mutex=self.mutex, callback=self.callback)
+            self.dl_handle = HttpDownloadClipHandler(fp=self.fp, range=self.range,
+                                                     mutex=self.mutex, log=self.log, callback=self.callback)
             http = HttpUtil(timeout=6, proxy=self.proxy)
-            http.add_header('Range', 'bytes=%s-%s' % (self.start_at, self.end_at))
+            if self.range:
+                http.add_header('Range', 'bytes=%s-%s' % self.range)
             while not self.isSetToStop():
                 try:
                     http.fetch(self.url, handler=self.dl_handle, headers=self.headers)
@@ -365,45 +419,52 @@ class ProgressBar:
 
 
 class HistoryFile:
-    def __init__(self, target):
-        self.target = os.path.abspath(target)
-        self.txt = self.target + '.txt'
+
+    def __init__(self, target_file):
+        self.target_file = os.path.abspath(target_file)
+        self.txt = self.target_file + '.txt'
         self.mutex = _Lock()
         self.buffered = 0
 
-    def reindex(self, indexes, size):
+    def mk_clips(self, clips, size):
+        """ return clips, current_size, is_retransmission
+        """
         assert size >= 0
-        if os.path.exists(self.txt) and os.path.exists(self.target):
-            self.indexes = []
+        cur_size = size
+        if os.path.exists(self.txt) and os.path.exists(self.target_file):
+            self.clips = []
             with open(self.txt, 'r') as fp:
                 for num in fp.read().split('|'):
                     if num.strip() != '':
                         (a, b) = num.split(',')
                         a, b = int(a), int(b)
                         if a <= b:
-                            size -= b - a
-                            self.indexes.append((a, b))
+                            cur_size -= b - a + 1
+                            self.clips.append((a, b))
+            return self.clips, cur_size
         else:
-            self.indexes = indexes
+            if clips is None:
+                self.clips = [(0, size - 1)]
+            else:
+                self.clips = clips
             with open(self.txt, 'w') as fp:
-                for num in indexes:
-                    fp.write('%d,%d|' % num)
-            size = 0
-        return self.indexes, size
+                for clip in self.clips:
+                    fp.write('%d,%d|' % clip)
+            return clips, 0
+
 
     def update(self, offset, size):
         assert size > 0
-        if offset < 0:
-            print offset
         assert offset >=0
         with self.mutex:
             self.buffered += size
-            for i in xrange(len(self.indexes)):
-                a, b = self.indexes[i]
+            for i in xrange(len(self.clips)):
+                a, b = self.clips[i]
                 if a <= offset <= b:
-                    assert a+size <= b+1
-                    if a + size <= b + 1:
-                        self.indexes[i] = (a + size, b)
+                    if size <= b - a + 1:
+                        self.clips[i] = (a + size, b)
+                    else:
+                        assert size <= b - a + 1
                     break
 
     def clean(self):
@@ -417,11 +478,11 @@ class HistoryFile:
             if not force and self.buffered < 1000*512:
                 return
             self.buffered = 0
-            for (a, b) in self.indexes:
-                if a < b+1:
+            for (a, b) in self.clips:
+                if a < b + 1:
                     str += '%d,%d|' % (a, b)
                 else:
-                    assert a <= b+1
+                    assert a <= (b + 1)
         with open(self.txt, 'w') as fp:
             fp.write(str)
 
@@ -432,12 +493,14 @@ if __name__ == "__main__":
         # '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
         '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     }
+    log = util.get_logger()
     progress_bar = ProgressBar()
-    axel = MiniAxel(progress_bar=progress_bar, retransmission=True)
-    for n in range(1, 5):
+    axel = MiniAxel(progress_bar=progress_bar, retrans=True, log=log)
+    for n in range(1, 3):
         for name, url in urls.items():
             try:
                 print 'test n=', n
+                print name
                 axel.dl(url, out=name, n=n)
                 with open(name, 'rb') as fp:
                     ss = util.md5_for_file(fp)
@@ -448,5 +511,6 @@ if __name__ == "__main__":
                 print e
                 raise
             finally:
+                print ''
                 if os.path.exists(name):
                     os.remove(name)
