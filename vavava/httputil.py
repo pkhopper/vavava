@@ -61,7 +61,11 @@ class HttpUtil(object):
         from urlparse import urlparse
         parts = urlparse(url)
         con = httplib.HTTPConnection(parts.netloc, timeout=self._timeout)
-        con.request('HEAD', parts.path + '/?' + parts.query, headers=self._headers)
+        if parts.query == '':
+            url = parts.path
+        else:
+            url = parts.path + '/?' + parts.query
+        con.request('HEAD', url, headers=self._headers)
         res = con.getresponse()
         con.close()
         return res
@@ -498,7 +502,8 @@ def main():
     import util
     urls = {
         # '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
-        '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
+        '140c4a7c9735dd3006a877a9acca3c31':
+            'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     }
     log = util.get_logger()
     progress_bar = ProgressBar()

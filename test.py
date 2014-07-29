@@ -55,7 +55,7 @@ class TestHttputil(unittest.TestCase):
         multi_md5 = singl_md5 = ''
         try:
             progress_bar = httputil.ProgressBar()
-            axel = httputil.MiniAxel(progress_bar=progress_bar)
+            axel = httputil.MiniAxel(progress_bar=progress_bar, retrans=True)
             axel.dl(TestHttputil.url, out=multi, n=9)
             axel.dl(TestHttputil.url, out=single, n=1)
             with open(multi, 'rb') as fp:
