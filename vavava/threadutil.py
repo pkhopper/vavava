@@ -25,15 +25,15 @@ class ThreadBase:
 
     def __run(self, *_args, **_kwargs):
         with self.__mutex:
-            self.running = True
+            self.__running = True
         self.run()
         with self.__mutex:
-            self.running = False
+            self.__running = False
 
     def start(self):
         self.__event.clear()
         with self.__mutex:
-            self.running = True
+            self.__running = True
         self.thread.start()
 
     def stop(self):
