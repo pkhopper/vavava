@@ -112,6 +112,13 @@ class HttpDownloadClipHandler:
                  buffer_size=BUFFER_SIZE, callback=None, log=None):
         self.parent = None
         self.range = range
+        # 'self.offset' always point to a new position, [0, --)
+        if range:
+            self.start_at, self.end_at = self.range
+            self.offset = self.start_at
+        else:
+            self.start_at = 0
+            self.offset = 0
         self.fp = fp
         self.ev = _Event()
         self.mutex = mutex
@@ -137,6 +144,7 @@ class HttpDownloadClipHandler:
 
     def handle(self, req, resp):
         self.working = True
+        self.ev.clear()
         try:
             if self.range:
                 self.__handle_clip(req, resp)
@@ -145,15 +153,15 @@ class HttpDownloadClipHandler:
         except:
             raise
         finally:
+            self.range = (self.start_at, self.end_at)
             if not self.ev.isSet():
                 self.ev.set()
             self.working = False
 
     def __handle_all(self, req, resp):
-        self.ev.clear()
         size = int(resp.info().getheader('Content-Length'))
         assert resp.info().getheader('Accept-Ranges') == 'bytes'
-        offset = 0
+        self.end_at = size-1
         while not self.ev.is_set():
             data = resp.read(self.buffer_size)
             if not data:
@@ -162,42 +170,32 @@ class HttpDownloadClipHandler:
             if not self.fp.closed:
                 self.fp.write(data)
             if self.callback and not self.fp.closed:
-                self.callback(offset, data_len)
-            offset += data_len
-        assert offset == size
+                self.callback(self.offset, data_len)
+            self.offset += data_len
+        assert self.offset == size
 
     def __handle_clip(self, req, resp):
-        self.ev.clear()
-        start_at, end_at = self.range
-        content_range = 'bytes %d-%d' % self.range
-        assert resp.headers['content-range'].startswith(content_range)
-        # offset pointed at a new position, [0, --)
-        offset = start_at
-        if resp.code not in (200, 206):
-            if self.log:
-                self.log.error('code=%d', resp.code)
-                self.log.error(resp.headers)
+        assert resp.headers['content-range'].startswith('bytes %d-%d' % self.range)
+        assert resp.code in (200, 206)
         while not self.ev.is_set():
             data = resp.read(self.buffer_size)
             if not data:
                 break
             data_len = len(data)
-            if offset + data_len > end_at + 1:
-                if self.log:
-                    self.log.error('|||||===> len=%d,offset=%d,end=%d', data_len, offset, end_at)
+            assert self.offset + data_len <= self.end_at + 1
             if self.mutex:
                 with self.mutex:
                     if not self.fp.closed:
-                        self.fp.seek(offset)
+                        self.fp.seek(self.offset)
                         self.fp.write(data)
                     else:
                         assert False
             if self.callback and not self.fp.closed:
-                self.callback(offset, data_len)
-            offset += data_len
+                self.callback(self.offset, data_len)
+            self.offset += data_len
         # if self.log:
         #     self.log.debug('clip end, offset=%d, end=%d', offset, end_at)
-        assert offset == end_at + 1
+        assert self.offset == self.end_at + 1
 
 
 class ContentEncodingProcessor(urllib2.BaseHandler):
@@ -316,7 +314,8 @@ class MiniAxel(HttpUtil):
 
     def __div_file(self, size, n):
         minsize = 1024
-        if n == 1 or size <= minsize:
+        # if n == 1 or size <= minsize:
+        if size <= minsize:
             return None
         clip_size = size/n
         clips = [(i*clip_size, i*clip_size+clip_size-1) for i in xrange(0, n-1)]
@@ -362,12 +361,12 @@ class MiniAxel(HttpUtil):
         def run(self):
             self.dl_handle = HttpDownloadClipHandler(fp=self.fp, range=self.range,
                                                      mutex=self.mutex, log=self.log, callback=self.callback)
-            http = HttpUtil(timeout=6, proxy=self.proxy)
-            if self.range:
-                http.add_header('Range', 'bytes=%s-%s' % self.range)
+            self.http = HttpUtil(timeout=6, proxy=self.proxy)
             while not self.isSetToStop():
                 try:
-                    http.fetch(self.url, handler=self.dl_handle, headers=self.headers)
+                    if self.range:
+                        self.http.add_header('Range', 'bytes=%s-%s' % self.range)
+                    self.http.fetch(self.url, handler=self.dl_handle, headers=self.headers)
                     return
                 except _socket_timeout as e:
                     if self.log:
@@ -519,13 +518,14 @@ def main():
                 os.remove(name)
                 if name != ss:
                     print 'md5 not match, n=%d' % n
+                    print ss
             except Exception as e:
                 print e
                 raise
             finally:
                 print ''
-                if os.path.exists(name):
-                    os.remove(name)
+                # if os.path.exists(name):
+                #     os.remove(name)
 
 
 def test():
