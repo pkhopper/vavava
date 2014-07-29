@@ -133,6 +133,9 @@ class DownloadStreamHandler:
 
     def __handle(self, req, resp):
         self.ev.clear()
+        content_range = 'bytes %d-%d' % (self.start_at, self.end_at)
+        if not resp.headers['content-range'].startswith(content_range):
+            pass
         while not self.ev.is_set():
             if self.end_at and self.start_at >= self.end_at:
                 break
@@ -354,6 +357,8 @@ class ProgressBar:
             output = output_format % (percentage*10, 0, now - self.start, expect,
                                        self.cur_size/1024, self.size/1024)
         sys.stdout.write(output)
+        if percentage == 100:
+            sys.stdout.write('\n')
         sys.stdout.flush()
         self.last_updat = now
         self.last_size = self.cur_size
@@ -361,14 +366,14 @@ class ProgressBar:
 
 class HistoryFile:
     def __init__(self, target):
-        txt = os.path.abspath(target)
-        self.txt = txt + '.txt'
+        self.target = os.path.abspath(target)
+        self.txt = self.target + '.txt'
         self.mutex = _Lock()
         self.buffered = 0
 
     def reindex(self, indexes, size):
         assert size >= 0
-        if os.path.exists(self.txt):
+        if os.path.exists(self.txt) and os.path.exists(self.target):
             self.indexes = []
             with open(self.txt, 'r') as fp:
                 for num in fp.read().split('|'):
@@ -429,24 +434,19 @@ if __name__ == "__main__":
     }
     progress_bar = ProgressBar()
     axel = MiniAxel(progress_bar=progress_bar, retransmission=True)
-    for name, url in urls.items():
-        try:
-            axel.dl(url, out=name, n=1)
-            with open(name, 'rb') as fp:
-                ss = util.md5_for_file(fp)
-            os.remove(name)
-            if name != ss:
-                print '[n=1] assert name == util.md5_for_file(fp)'
-
-            axel.dl(url, out=name, n=3)
-            with open(name, 'rb') as fp:
-                ss = util.md5_for_file(fp)
-            os.remove(name)
-            if name != ss:
-                print '[n=3] assert name == util.md5_for_file(fp)'
-        except Exception as e:
-            print e
-            raise
-        finally:
-            if os.path.exists(name):
+    for n in range(1, 5):
+        for name, url in urls.items():
+            try:
+                print 'test n=', n
+                axel.dl(url, out=name, n=n)
+                with open(name, 'rb') as fp:
+                    ss = util.md5_for_file(fp)
                 os.remove(name)
+                if name != ss:
+                    print 'md5 not match, n=%d' % n
+            except Exception as e:
+                print e
+                raise
+            finally:
+                if os.path.exists(name):
+                    os.remove(name)
