@@ -9,29 +9,38 @@ class ThreadBase:
     def __init__(self, log=None):
         self.__event = threading.Event()
         self.thread = threading.Thread(target=self.__run)
-        self.running = False
+        self.__running = False
+        self.__mutex = threading.Lock()
         self.log = log
 
     def run(self):
         raise NotImplementedError()
 
+    def isRunning(self):
+        with self.__mutex:
+            return self.__running
+
     def isSetToStop(self):
         return self.__event.isSet()
 
     def __run(self, *_args, **_kwargs):
-        self.running = True
+        with self.__mutex:
+            self.running = True
         self.run()
-        self.running = False
+        with self.__mutex:
+            self.running = False
 
     def start(self):
         self.__event.clear()
+        with self.__mutex:
+            self.running = True
         self.thread.start()
 
     def stop(self):
         self.__event.set()
 
     def isAlive(self):
-        return self.running and self.thread.isAlive()
+        return self.isRunning() and self.thread.isAlive()
 
     def join(self, timeout=None):
         self.thread.join(timeout)
@@ -181,7 +190,7 @@ def test_thread():
 
     mgr = ThreadManager()
     print '=============== start'
-    for i in xrange(10):
+    for i in xrange(0,1):
         mgr.addThreads([TestThread()])
     print '=========== ', len(mgr.threads)
     try:
@@ -219,7 +228,8 @@ if __name__ == "__main__":
         from vavava import util
         import logging
         log = util.get_logger(level=logging.INFO)
-        test_workshop(log)
+        # test_workshop(log)
+        test_thread()
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)
