@@ -217,7 +217,7 @@ class MiniAxel(HttpUtil):
         clip_size = size/n
         for i in xrange(0, n-1):
             clips.append((i*clip_size, i*clip_size+clip_size-1))
-        clips.append(((n-1)*clip_size, size))
+        clips.append(((n-1)*clip_size, size-1))
         mutex = _Lock()
         cur_size = 0
         if self.retransmission:
@@ -345,12 +345,12 @@ class ProgressBar:
         output_format = '\r[%3.1d%% %5.1dk/s][ %5.1ds/%5.1ds] [%dk/%dk]            '
         if speed > 0:
             output = output_format % (percentage*10, speed/1024, now - self.start,
-                (self.size-self.cur_size)*1024/speed, self.cur_size/1024, self.size/1024)
+                (self.size-self.cur_size)/speed, self.cur_size/1024, self.size/1024)
         else:
             if self.cur_size == 0:
                 expect = 0
             else:
-                expect = (self.size - self.cur_size)*(now - self.start)/self.cur_size
+                expect = (self.size-self.cur_size)*(now-self.start)/self.cur_size
             output = output_format % (percentage*10, 0, now - self.start, expect,
                                        self.cur_size/1024, self.size/1024)
         sys.stdout.write(output)
@@ -396,11 +396,7 @@ class HistoryFile:
             for i in xrange(len(self.indexes)):
                 a, b = self.indexes[i]
                 if a <= offset <= b:
-                    if not (a+size <= b+1):
-                        print 'a=%d,size=%d,b=%d' % (a, size, b)
-                        # ugly fix ?????
-                        a = b + 1 - size
-                    # assert a+size <= b+1 ?????
+                    assert a+size <= b+1
                     if a + size <= b + 1:
                         self.indexes[i] = (a + size, b)
                     break
