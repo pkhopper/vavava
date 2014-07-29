@@ -61,7 +61,7 @@ class HttpUtil(object):
         from urlparse import urlparse
         parts = urlparse(url)
         con = httplib.HTTPConnection(parts.netloc, timeout=self._timeout)
-        con.request('HEAD', parts.path)
+        con.request('HEAD', parts.path + '/?' + parts.query, headers=self._headers)
         res = con.getresponse()
         con.close()
         return res
@@ -263,14 +263,19 @@ class MiniAxel(HttpUtil):
         cur_size = 0
         size = self.__head(url)
         clips = self.__div_file(size, n)
-        if self.retransmission:
+
+        if size and self.retransmission:
             self.history_file = HistoryFile(fp.name)
             clips, cur_size = self.history_file.mk_clips(clips, size)
-        if self.progress_bar:
-            self.progress_bar.reset(size, cur_size)
 
-        if clips is None or size == 0:
+        # can not retransmission
+        if clips is None or size is None or size == 0:
             clips = [None]
+            size = 0
+
+        if self.progress_bar:
+            self.progress_bar.reset(total_size=size, cur_size=cur_size)
+
         for clip in clips:
             thread = MiniAxel.DownloadThread(url=url, fp=fp, range=clip, mutex=mutex,
                                              msgq=self.mgr.msg_queue, proxy=self.proxy,
@@ -373,12 +378,15 @@ class MiniAxel(HttpUtil):
 
 
 class ProgressBar:
+
     def __init__(self, size=None):
         self.reset(size, 0)
         self.mutex = _Lock()
 
     def reset(self, total_size, cur_size):
         self.size = total_size
+        if self.size == 0:
+            self.size = 1
         self.cur_size = cur_size
         self.last_size = 0
         self.last_updat = self.start = _time()
@@ -388,7 +396,7 @@ class ProgressBar:
             self.cur_size += data_size
 
     def display(self, force=False):
-        assert self.size
+        assert self.size is not None
         now = _time()
         duration = now - self.last_updat
         if not force and duration < 1:
@@ -429,7 +437,6 @@ class HistoryFile:
     def mk_clips(self, clips, size):
         """ return clips, current_size, is_retransmission
         """
-        assert size >= 0
         cur_size = size
         if os.path.exists(self.txt) and os.path.exists(self.target_file):
             self.clips = []
@@ -487,7 +494,7 @@ class HistoryFile:
             fp.write(str)
 
 
-if __name__ == "__main__":
+def main():
     import util
     urls = {
         # '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
@@ -514,3 +521,20 @@ if __name__ == "__main__":
                 print ''
                 if os.path.exists(name):
                     os.remove(name)
+
+if __name__ == "__main__":
+    import util
+    name = 'id_XNzQ3OTg2MjQ4'
+    url = 'http://v.youku.com/v_show/id_XNzQ3OTg2MjQ4.html\?f\=22590461\&ev\=1 -f 1'
+    log = util.get_logger()
+    progress_bar = ProgressBar()
+    axel = MiniAxel(progress_bar=progress_bar, retrans=True, log=log)
+    try:
+        axel.dl(url, out=name, n=2)
+    except Exception as e:
+        print e
+        raise
+    finally:
+        print ''
+        # if os.path.exists(name):
+        #     os.remove(name)

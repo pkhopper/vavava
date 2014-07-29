@@ -42,7 +42,7 @@ class TestHttputil(unittest.TestCase):
         client = httputil.HttpUtil()
         #client.set_proxy({"http":"http://127.0.0.1:8087"})
         with open(TestHttputil.orig_md5, 'w') as fp:
-            handle = httputil.DownloadStreamHandler(fp)
+            handle = httputil.HttpDownloadClipHandler(fp)
             client.fetch(TestHttputil.url, handle)
         with open(TestHttputil.orig_md5, 'r') as fp:
             self.assertTrue(TestHttputil.orig_md5 == util.md5_for_file(fp))
