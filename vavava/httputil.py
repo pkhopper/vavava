@@ -522,7 +522,8 @@ def main():
                 if os.path.exists(name):
                     os.remove(name)
 
-if __name__ == "__main__":
+
+def test():
     import util
     name = 'id_XNzQ3OTg2MjQ4'
     url = 'http://v.youku.com/v_show/id_XNzQ3OTg2MjQ4.html\?f\=22590461\&ev\=1 -f 1'
@@ -538,3 +539,6 @@ if __name__ == "__main__":
         print ''
         # if os.path.exists(name):
         #     os.remove(name)
+
+if __name__ == "__main__":
+    main()
