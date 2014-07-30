@@ -153,6 +153,7 @@ class HttpDownloadClipHandler:
         except:
             raise
         finally:
+            # reset for retransmission
             self.range = (self.offset, self.end_at)
             self.start_at = self.offset
             if not self.ev.isSet():
@@ -176,10 +177,6 @@ class HttpDownloadClipHandler:
         assert self.offset == size
 
     def __handle_clip(self, req, resp):
-        if not resp.headers['content-range'].startswith('bytes %d-%d' % self.range):
-            print resp.headers['content-range']
-            print '"bytes %d-%d"' % self.range
-            print '， s=%d,e=%d,o=%d' % (self.start_at, self.end_at, self.offset)
         assert resp.headers['content-range'].startswith('bytes %d-%d' % self.range)
         assert resp.code in (200, 206)
         while not self.ev.is_set():
@@ -187,8 +184,6 @@ class HttpDownloadClipHandler:
             if not data:
                 break
             data_len = len(data)
-            # if self.log and self.offset + data_len > self.end_at + 1:
-            #     self.log.debug('len=%d, offset=%d, end=%d', data_len, self.offset, self.end_at)
             assert self.offset + data_len <= self.end_at + 1
             if self.mutex:
                 with self.mutex:
@@ -261,6 +256,8 @@ class MiniAxel(HttpUtil):
             size = int(info.getheader('Content-Length'))
             assert info.getheader('Accept-Ranges') == 'bytes'
         except:
+            if self.log:
+                self.log.exception(e)
             return None
         return size
 
@@ -441,6 +438,8 @@ class ProgressBar:
         sys.stdout.flush()
         self.last_updat = now
         self.last_size = self.cur_size
+        if force and percentage == 10:
+            print ''
 
 
 class HistoryFile:

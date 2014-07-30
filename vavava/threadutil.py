@@ -5,13 +5,26 @@ import threading
 import Queue
 from time import sleep as _sleep, time as _time
 
+
 class ThreadBase:
+
     def __init__(self, log=None):
         self.__event = threading.Event()
         self.thread = threading.Thread(target=self.__run)
+        self.getName = self.thread.getName
+        self.ident = self.thread.ident
+        self.isDaemon = self.thread.isDaemon
+        self.setDaemon = self.thread.setDaemon
+        self.setName = self.thread.setName
         self.__running = False
         self.__mutex = threading.Lock()
         self.log = log
+
+    def start(self):
+        self.__event.clear()
+        with self.__mutex:
+            self.__running = True
+        self.thread.start()
 
     def run(self):
         raise NotImplementedError()
@@ -20,8 +33,17 @@ class ThreadBase:
         with self.__mutex:
             return self.__running
 
+    def isAlive(self):
+        return self.isRunning() and self.thread.isAlive()
+
+    def setToStop(self):
+        self.__event.set()
+
     def isSetToStop(self):
         return self.__event.isSet()
+
+    def join(self, timeout=None):
+        self.thread.join(timeout)
 
     def __run(self, *_args, **_kwargs):
         with self.__mutex:
@@ -30,20 +52,6 @@ class ThreadBase:
         with self.__mutex:
             self.__running = False
 
-    def start(self):
-        self.__event.clear()
-        with self.__mutex:
-            self.__running = True
-        self.thread.start()
-
-    def stop(self):
-        self.__event.set()
-
-    def isAlive(self):
-        return self.isRunning() and self.thread.isAlive()
-
-    def join(self, timeout=None):
-        self.thread.join(timeout)
 
 class ThreadManager:
     def __init__(self, log=None):
@@ -72,7 +80,7 @@ class ThreadManager:
     def stopAll(self):
         for th in self.threads:
             if th.isAlive():
-                th.stop()
+                th.setToStop()
 
     def joinAll(self, timeout=None):
         for th in self.threads:
@@ -95,7 +103,7 @@ class WorkBase:
     def __init__(self):
         pass
 
-    def work(self, log):
+    def work(self, this_thread, log):
         raise NotImplementedError('WorkBase')
 
 
@@ -106,6 +114,7 @@ class WorkerThread(ThreadBase):
         self.works = Queue.Queue()
 
     def add_work(self, work):
+        assert isinstance(work, WorkBase)
         self.works.put(work)
 
     def idel(self):
@@ -117,7 +126,7 @@ class WorkerThread(ThreadBase):
                 if not self.works.empty():
                     worker = self.works.get(timeout=1)
                     if worker:
-                        worker.work(log=self.log)
+                        worker.work(this_thread=self, log=self.log)
             except Exception as e:
                 if self.log:
                     self.log.exception(e)
@@ -139,34 +148,40 @@ class WorkShop:
         with self.mutex:
             for th in self.mgr.threads:
                 if th.idel():
-                    self.log.debug('__get_th() 1')
                     return th
             th_len = self.mgr.length()
             if th_len < self.tmax:
                 new_th = WorkerThread(log=self.log)
                 self.mgr.addThreads([new_th])
                 new_th.start()
-                self.log.debug('__get_th() 2')
                 return new_th
             else:
-                self.log.debug('__get_th() 3')
                 return self.mgr.threads[(th_len % int(_time())) - 1]
 
-    def add_work(self, work):
-        if isinstance(work, WorkBase):
-            self.__get_th().add_work(work=work)
-        else:
+    def addWork(self, work):
+        if not isinstance(work, WorkBase):
             raise ValueError('not a Work class')
+        self.__get_th().add_work(work=work)
+
+    def addWorks(self, works):
+        for work in works:
+            self.addWork(work)
 
     def serve(self):
-        self.log.debug('[shop] serve 1')
         self.mgr.startAll()
 
-    def stop_service(self, timeout=None):
-        self.log.debug('[shop] stop_service 1')
+    def setShopClose(self):
         self.mgr.stopAll()
+
+    def waitShopClose(self, timeout=None):
         self.mgr.joinAll(timeout=timeout)
-        self.log.debug('[shop] stop_service 2')
+
+    def isShopClosed(self):
+        with self.mutex:
+            for th in self.mgr.threads:
+                if th.isAlive():
+                    return False
+        return True
 
 
 class TestWork(WorkBase):
@@ -174,8 +189,8 @@ class TestWork(WorkBase):
         WorkBase.__init__(self)
         self.name = name
 
-    def work(self, log=None):
-        print 'am work ', self.name
+    def work(self, this_thread, log=None):
+        print 'am work ', self.name, 'am in ', this_thread.getName()
         _sleep(1)
 
 
@@ -209,17 +224,20 @@ def test_thread():
 
 def test_workshop(log):
     ws = WorkShop(tmin=5, tmax=10, log=log)
-    ws.serve()
     i = 0
     try:
-        while True:
+        ws.serve()
+        while not ws.isShopClosed():
             wk = TestWork(name='work_%05d' % i)
-            ws.add_work(wk)
-            # _sleep(0.5)
+            ws.addWork(wk)
+            _sleep(0.5)
             i += 1
             print 'workers =', ws.mgr.length()
-    except:
-        ws.stop_service()
+    except Exception as e:
+        log.exception(e)
+    finally:
+        ws.setShopClose()
+        ws.waitShopClose()
         raise
 
 
@@ -228,8 +246,8 @@ if __name__ == "__main__":
         from vavava import util
         import logging
         log = util.get_logger(level=logging.INFO)
-        # test_workshop(log)
-        test_thread()
+        test_workshop(log)
+        # test_thread()
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)
