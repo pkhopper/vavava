@@ -17,6 +17,7 @@ util.set_default_utf8()
 
 
 class TestHttputil(unittest.TestCase):
+    url = r'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
     orig_md5 = r'140c4a7c9735dd3006a877a9acca3c31'
     
     def test_get(self):

@@ -126,7 +126,7 @@ class WorkerThread(ThreadBase):
             start_at = _time()
             try:
                 if not self.works.empty():
-                    self.log.debug('[wt] get a work')
+                    self.log.debug('[wt] new work')
                     worker = self.works.get()
                     if worker:
                         worker.work(this_thread=self, log=self.log)
@@ -153,12 +153,13 @@ class WorkShop:
                     return th
             th_len = self.mgr.length()
             if th_len < self.tmax:
+                self.log.warn('[ws] new work-line')
                 new_th = WorkerThread(log=self.log)
                 self.mgr.addThreads([new_th])
                 new_th.start()
                 return new_th
             else:
-                self.log.warn('[ws] all workline are busy')
+                self.log.warn('[ws] all work-lines are busy')
                 return self.mgr.threads[randint(0, th_len-1)]
 
     def addWork(self, work):
