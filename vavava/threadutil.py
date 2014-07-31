@@ -3,6 +3,7 @@
 
 import threading
 import Queue
+from random import randint
 from time import sleep as _sleep, time as _time
 
 
@@ -157,7 +158,8 @@ class WorkShop:
                 new_th.start()
                 return new_th
             else:
-                return self.mgr.threads[(th_len % int(_time())) - 1]
+                self.log.warn('[ws] all workline are busy')
+                return self.mgr.threads[randint(0, th_len-1)]
 
     def addWork(self, work):
         if not isinstance(work, WorkBase):
@@ -231,7 +233,8 @@ def test_workshop(log):
         while not ws.isShopClosed():
             wk = TestWork(name='work_%05d' % i)
             ws.addWork(wk)
-            _sleep(0.5)
+            if i > 1000:
+                _sleep(0.5)
             i += 1
             log.debug('workers = %d', ws.mgr.length())
     except Exception as e:
