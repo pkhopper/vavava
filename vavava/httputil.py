@@ -195,8 +195,8 @@ class HttpDownloadClipHandler:
             if self.callback and not self.fp.closed:
                 self.callback(self.offset, data_len)
             self.offset += data_len
-        if self.log:
-            self.log.debug('clip end, offset=%d, end=%d', self.offset, self.end_at)
+        # if self.log:
+        #     self.log.debug('clip end, offset=%d, end=%d', self.offset, self.end_at)
         assert self.offset == self.end_at + 1
 
 

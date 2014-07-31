@@ -133,7 +133,7 @@ class WorkerThread(ThreadBase):
                 self.log.exception(e)
             duration = _time() - start_at
             if duration < 1:
-                _sleep(duration)
+                _sleep(1)
 
 class WorkShop:
     def __init__(self, tmin, tmax, log=None):
