@@ -7,6 +7,7 @@ import gzip
 import zlib
 import urllib
 import urllib2
+import StringIO
 import cookielib
 from io import BytesIO
 from time import time as _time, sleep as _sleep
@@ -108,7 +109,7 @@ class HttpUtil(object):
 
 class HttpDownloadClipHandler:
 
-    def __init__(self, fp, range=None, mutex=None,
+    def __init__(self, fp, range=None, file_mutex=None,
                  buffer_size=BUFFER_SIZE, callback=None, log=None):
         self.parent = None
         self.range = range
@@ -120,15 +121,15 @@ class HttpDownloadClipHandler:
             self.start_at = 0
             self.offset = 0
         self.fp = fp
-        self.ev = _Event()
-        self.mutex = mutex
+        self.stop_ev = _Event()
+        self.file_mutex = file_mutex
         self.buffer_size = buffer_size
         self.callback = callback
         self.log = log
         self.working = False
 
     def stop_dl(self):
-        self.ev.set()
+        self.stop_ev.set()
 
     def wait_stop(self, timeout=TIMEOUT):
         assert timeout
@@ -144,7 +145,7 @@ class HttpDownloadClipHandler:
 
     def handle(self, req, resp):
         self.working = True
-        self.ev.clear()
+        self.stop_ev.clear()
         try:
             if self.range:
                 self.__handle_clip(req, resp)
@@ -156,15 +157,15 @@ class HttpDownloadClipHandler:
             # reset for retransmission
             self.range = (self.offset, self.end_at)
             self.start_at = self.offset
-            if not self.ev.isSet():
-                self.ev.set()
+            if not self.stop_ev.isSet():
+                self.stop_ev.set()
             self.working = False
 
     def __handle_all(self, req, resp):
         size = int(resp.info().getheader('Content-Length'))
         assert resp.info().getheader('Accept-Ranges') == 'bytes'
         self.end_at = size-1
-        while not self.ev.is_set():
+        while not self.stop_ev.is_set():
             data = resp.read(self.buffer_size)
             if not data:
                 break
@@ -179,14 +180,14 @@ class HttpDownloadClipHandler:
     def __handle_clip(self, req, resp):
         assert resp.headers['content-range'].startswith('bytes %d-%d' % self.range)
         assert resp.code in (200, 206)
-        while not self.ev.is_set():
+        while not self.stop_ev.is_set():
             data = resp.read(self.buffer_size)
             if not data:
                 break
             data_len = len(data)
             assert self.offset + data_len <= self.end_at + 1
-            if self.mutex:
-                with self.mutex:
+            if self.file_mutex:
+                with self.file_mutex:
                     if not self.fp.closed:
                         self.fp.seek(self.offset)
                         self.fp.write(data)
@@ -241,7 +242,7 @@ class MiniAxel(HttpUtil):
         self.log = log
 
     def dl(self, url, out, headers=None, n=5):
-        if isinstance(out, file):
+        if isinstance(out, file) or isinstance(out, StringIO.StringIO):
             self.__dl(url, out, headers=headers, n=n)
         elif os.path.exists(out):
             with open(out, 'rb+') as fp:

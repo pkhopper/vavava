@@ -11,12 +11,12 @@ class ThreadBase:
 
     def __init__(self, log=None):
         self.__event = threading.Event()
-        self.thread = threading.Thread(target=self.__run)
-        self.getName = self.thread.getName
-        self.ident = self.thread.ident
-        self.isDaemon = self.thread.isDaemon
-        self.setDaemon = self.thread.setDaemon
-        self.setName = self.thread.setName
+        self.__thread = threading.Thread(target=self.__run)
+        self.getName = self.__thread.getName
+        self.ident = self.__thread.ident
+        self.isDaemon = self.__thread.isDaemon
+        self.setDaemon = self.__thread.setDaemon
+        self.setName = self.__thread.setName
         self.__running = False
         self.__mutex = threading.Lock()
         self.log = log
@@ -25,7 +25,7 @@ class ThreadBase:
         self.__event.clear()
         with self.__mutex:
             self.__running = True
-        self.thread.start()
+        self.__thread.start()
 
     def run(self):
         raise NotImplementedError()
@@ -35,7 +35,7 @@ class ThreadBase:
             return self.__running
 
     def isAlive(self):
-        return self.isRunning() and self.thread.isAlive()
+        return self.isRunning() and self.__thread.isAlive()
 
     def setToStop(self):
         self.__event.set()
@@ -44,7 +44,7 @@ class ThreadBase:
         return self.__event.isSet()
 
     def join(self, timeout=None):
-        self.thread.join(timeout)
+        self.__thread.join(timeout)
 
     def __run(self, *_args, **_kwargs):
         with self.__mutex:
@@ -126,7 +126,7 @@ class WorkerThread(ThreadBase):
             start_at = _time()
             try:
                 if not self.works.empty():
-                    self.log.debug('[wt] new work')
+                    # self.log.debug('[wt] new work')
                     worker = self.works.get()
                     if worker:
                         worker.work(this_thread=self, log=self.log)
@@ -203,7 +203,7 @@ def test_thread():
     class TestThread(ThreadBase):
         def run(self):
             while not self.isSetToStop():
-                sys.stdout.write(self.thread.name + '\n')
+                sys.stdout.write(self.__thread.name + '\n')
                 sys.stdout.flush()
                 time.sleep(1)
 
