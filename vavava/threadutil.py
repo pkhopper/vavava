@@ -108,7 +108,7 @@ class WorkBase:
 
 
 class WorkerThread(ThreadBase):
-    def __init__(self, log=None):
+    def __init__(self, log):
         ThreadBase.__init__(self, log=log)
         self.mutex = threading.Lock()
         self.works = Queue.Queue()
@@ -122,17 +122,18 @@ class WorkerThread(ThreadBase):
 
     def run(self):
         while not self.isSetToStop():
+            start_at = _time()
             try:
                 if not self.works.empty():
-                    worker = self.works.get(timeout=1)
+                    self.log.debug('[wt] get a work')
+                    worker = self.works.get()
                     if worker:
                         worker.work(this_thread=self, log=self.log)
             except Exception as e:
-                if self.log:
-                    self.log.exception(e)
-                else:
-                    print e
-
+                self.log.exception(e)
+            duration = _time() - start_at
+            if duration < 1:
+                _sleep(duration)
 
 class WorkShop:
     def __init__(self, tmin, tmax, log=None):
@@ -190,7 +191,7 @@ class TestWork(WorkBase):
         self.name = name
 
     def work(self, this_thread, log=None):
-        print 'am work ', self.name, 'am in ', this_thread.getName()
+        log.debug('am work %s, am in %s', self.name, this_thread.getName())
         _sleep(1)
 
 
@@ -232,7 +233,7 @@ def test_workshop(log):
             ws.addWork(wk)
             _sleep(0.5)
             i += 1
-            print 'workers =', ws.mgr.length()
+            log.debug('workers = %d', ws.mgr.length())
     except Exception as e:
         log.exception(e)
     finally:
@@ -245,7 +246,7 @@ if __name__ == "__main__":
     try:
         from vavava import util
         import logging
-        log = util.get_logger(level=logging.INFO)
+        log = util.get_logger(level=logging.DEBUG)
         test_workshop(log)
         # test_thread()
     except KeyboardInterrupt as e:
