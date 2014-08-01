@@ -8,7 +8,7 @@ from ConfigParser import ConfigParser
 
 class BaseConfig:
 
-    def set_ini_attrs(self):
+    def get_ini_attrs(self):
         raise  NotImplementedError()
 
     def get_args(self, argv):
@@ -16,7 +16,7 @@ class BaseConfig:
 
     def read_cmdline_config(self, ini, argv=None, script=__file__):
         self.ini = ini
-        self.ini_attrs = self.set_ini_attrs()
+        self.ini_attrs = self.get_ini_attrs()
         self.argv = argv
         self.script_path = util.script_path(script)
         if argv:
