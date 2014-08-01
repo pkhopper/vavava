@@ -59,6 +59,6 @@ class BaseConfig:
     def __str__(self):
         str = ''
         for k, v in self.ini_attrs.items():
-            a, b = k.split('.')
+            a, b = k.split('|')
             str += '{} = {}\n'.format(b, getattr(self, b))
         return str
