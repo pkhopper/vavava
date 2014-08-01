@@ -33,7 +33,7 @@ class BaseConfig:
             self.ini = os.path.join(self.script_path, self.ini)
             self.cfg = cfg.read(self.ini)
         for k, v in self.ini_attrs.items():
-            a, b = k.split('.')
+            a, b = k.split('|')
             if not isinstance(v, str):
                 setattr(self, b, v(cfg))
             elif v in ('s'):
