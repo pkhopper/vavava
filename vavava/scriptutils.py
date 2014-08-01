@@ -8,15 +8,15 @@ from ConfigParser import ConfigParser
 
 class BaseConfig:
 
-    def set_args(self, argv):
+    def set_ini_attrs(self):
         raise  NotImplementedError()
 
-    def set_ini_attrs(self, argv):
+    def get_args(self, argv):
         raise  NotImplementedError()
 
     def read_cmdline_config(self, ini, argv=None, script=__file__):
         self.ini = ini
-        self.ini_attrs = self.set_args()
+        self.ini_attrs = self.set_ini_attrs()
         self.argv = argv
         self.script_path = util.script_path(script)
         if argv:
@@ -50,7 +50,7 @@ class BaseConfig:
 
     def parse_argv(self):
         self.parse_ini()
-        args = self.set_args(self.argv)
+        args = self.get_args(self.argv)
         if args:
             for k, v in args.__dict__.items():
                 if v:
