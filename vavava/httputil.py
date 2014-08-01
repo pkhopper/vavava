@@ -72,6 +72,8 @@ class HttpUtil(object):
         con.request('HEAD', url, headers=self._headers)
         res = con.getresponse()
         con.close()
+        if res.status == 302:
+            res = self.head(res.getheader('Location'))
         return res
 
     def parse_charset(self):
@@ -544,6 +546,7 @@ def mem_file_test(axel, url, md5, n):
     import util
     fp = StringIO()
     axel.dl(url, out=fp, n=n)
+    # fp.read = fp.getvalue
     ss = util.md5_for_file(fp)
     del fp
     if md5 != ss:
@@ -566,7 +569,6 @@ def random_test(axel, n):
     with io.open('321.jpg', 'wb') as ffp:
         fp.read = fp.getvalue
         data = fp.read()
-        print 'asdfasd  ', len(data)
         ffp.write(data)
     fp.close()
     with open('321.jpg', 'rb') as ffp:
@@ -587,9 +589,9 @@ def main():
     for n in range(1, 6):
         for md5, url in urls.items():
             try:
-                random_test(axel, n)
-                mem_file_test(axel, url, md5, n)
-                # file_test(axel, url, md5, n)
+                # random_test(axel, n)
+                # mem_file_test(axel, url, md5, n)
+                file_test(axel, url, md5, n)
             except Exception as e:
                 print e
                 raise
