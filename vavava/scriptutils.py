@@ -16,7 +16,7 @@ class BaseConfig:
 
     def read_cmdline_config(self, ini, argv=None, script=__file__):
         self.ini = ini
-        self.ini_attrs = self.set_args
+        self.ini_attrs = self.set_args()
         self.argv = argv
         self.script_path = util.script_path(script)
         if argv:
