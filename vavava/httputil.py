@@ -3,13 +3,15 @@
 
 import sys
 import os
+import io
 import gzip
 import zlib
 import urllib
 import urllib2
-import StringIO
 import cookielib
-from io import BytesIO
+from StringIO import StringIO
+# from io import StringIO
+# from cStringIO import StringIO
 from time import time as _time, sleep as _sleep
 from threading import Event as _Event
 from threading import Lock as _Lock
@@ -27,35 +29,35 @@ DEBUG_LVL = 0
 
 class HttpUtil(object):
     """ a simple client of http"""
-    def __init__(self, timeout=TIMEOUT, debug_lvl=DEBUG_LVL, proxy=None):
+    def __init__(self, timeout=TIMEOUT, debug_lvl=DEBUG_LVL, proxy=None, zip_encoding=True):
         self._cookie = cookielib.CookieJar()
         self._timeout = timeout
         self._proxy = proxy
+        self._zip_encoding = True
         self._opener = None
         self._buffer_size = BUFFER_SIZE
-        self._charset = CHARSET
         self._set_debug_level(debug_lvl)
         self._headers = {'Referer': REFERER}
         self._headers['User-Agent'] = DEFAULT_USER_AGENT
         self._headers['Connection'] = 'keep-alive'
         self._headers['Accept'] = r'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-        self._headers['Cache-Control'] = 'max-age=0'
 
-    def get(self, url, headers=None):
-        self.response = self._request(url, headers=headers)
+    def get(self, url):
+        self._init_opener()
+        self.response = self._get_response(url)
         return self.response.read()
 
-    def post(self, url, post_dic, headers=None):
-        post_data = urllib.urlencode(post_dic).encode(self._charset)
-        self.response = self._request(url, headers=headers, post_data=post_data)
+    def post(self, url, post_dic):
+        post_data = urllib.urlencode(post_dic).encode('utf8')
+        self._init_opener()
+        self.response = self._get_response(url, post_data=post_data)
         return self.response.read()
 
-    def fetch(self, url, handler, post_data=None, headers=None):
-        if handler is None:
-            raise ValueError("need handler")
-        handler.set_parent(self)
-        resp = self._request(url, post_data=post_data, headers=headers)
-        handler.handle(req=None, resp=resp)
+    def fetch(self, url, handler):
+        assert handler
+        self._init_opener(handler)
+        resp = self._get_response(url)
+        # handler.handle(req=None, resp=resp)
 
     def head(self, url):
         import httplib
@@ -66,6 +68,7 @@ class HttpUtil(object):
             url = parts.path
         else:
             url = parts.path + '/?' + parts.query
+        self._init_opener()
         con.request('HEAD', url, headers=self._headers)
         res = con.getresponse()
         con.close()
@@ -90,25 +93,73 @@ class HttpUtil(object):
         HTTPConnection.debuglevel = level
         self._debug_lvl = level
 
-    def _request(self, url, post_data=None, headers=None):
+    def _init_opener(self, *handlers):
         if self._opener is None:
-            self._opener = urllib2.build_opener(ContentEncodingProcessor())
+            self._opener = urllib2.build_opener()
+        if self._zip_encoding:
+            self._opener.add_handler(ContentEncodingProcessor())
         if self._cookie is not None:
             self._opener.add_handler(urllib2.HTTPCookieProcessor(self._cookie))
         if self._proxy is not None:
             self._opener.add_handler(urllib2.ProxyHandler(self._proxy))
-        if headers:
-            for k, v in self._headers.items():
-                if not headers.has_key(k):
-                    headers[k] = v
-        else:
-            headers = self._headers
-        req = urllib2.Request(url, data=post_data, headers=headers)
+        for handler in handlers:
+            self._opener.add_handler(handler)
+
+    def _get_response(self, url, post_data=None):
+        req = urllib2.Request(url, data=post_data, headers=self._headers)
         return self._opener.open(req, timeout=self._timeout)
 
 
-class HttpDownloadClipHandler:
+class ContentEncodingProcessor(urllib2.BaseHandler):
+    """A handler to add gzip capabilities to urllib2 requests """
+    # add headers to requests
+    handler_order = 501
 
+    def __init__(self):
+        try:
+            self.deflate = lambda data: zlib.decompress(data, -1*zlib.MAX_WBITS)
+        except zlib.error:
+            self.deflate = lambda data: zlib.decompress(data)
+
+    def http_request(self, req):
+        req.add_header("Accept-Encoding", "gzip,deflate")
+        return req
+
+    def http_response(self, req, resp):
+        old_resp = resp
+        if not req.has_header('Accept-Encoding'):
+            return resp
+        if req.has_header('Range'):
+            return resp
+        if resp.headers.get("content-encoding") == "gzip":
+            gz = gzip.GzipFile(fileobj=StringIO(resp.read()), mode="r")
+            resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
+            resp.msg = old_resp.msg
+            # deflate
+        if resp.headers.get("content-encoding") == "deflate":
+            gz = StringIO(self.deflate(resp.read()))
+            resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
+            resp.msg = old_resp.msg
+        return resp
+
+
+class HttpDownloader:
+    def __init__(self, fp, range=None, file_mutex=None,
+                 buffer_size=BUFFER_SIZE, callback=None, log=None):
+        self.http = HttpUtil(zip_encoding=False)
+        self.handler = HttpDownloadClipHandler(
+            fp, range=range, file_mutex=file_mutex,
+            buffer_size=buffer_size, callback=callback, log=log
+        )
+        self.stop_dl = self.handler.stop_dl
+        self.wait_stop = self.handler.wait_stop
+
+    def fetch(self, url):
+        self.http.fetch(url, self.handler)
+
+
+class HttpDownloadClipHandler(urllib2.BaseHandler):
+    handler_order = 502
     def __init__(self, fp, range=None, file_mutex=None,
                  buffer_size=BUFFER_SIZE, callback=None, log=None):
         self.parent = None
@@ -140,10 +191,15 @@ class HttpDownloadClipHandler:
                 raise RuntimeError('is_stop timeout')
             timeout -= 0.5
 
-    def set_parent(self, p):
-        self.parent = p
+    def http_request(self, req):
+        if self.range is not None:
+            req.add_header('Range', 'bytes=%s-%s' % self.range)
+        elif req.headers.has_key('Accept-Encoding'):
+            # disable ContentEncodingProcessor
+            del req.headers['Accept-Encoding']
+        return req
 
-    def handle(self, req, resp):
+    def http_response(self, req, resp):
         self.working = True
         self.stop_ev.clear()
         try:
@@ -160,6 +216,7 @@ class HttpDownloadClipHandler:
             if not self.stop_ev.isSet():
                 self.stop_ev.set()
             self.working = False
+            return resp
 
     def __handle_all(self, req, resp):
         size = int(resp.info().getheader('Content-Length'))
@@ -182,9 +239,9 @@ class HttpDownloadClipHandler:
         assert resp.code in (200, 206)
         while not self.stop_ev.is_set():
             data = resp.read(self.buffer_size)
-            if not data:
-                break
             data_len = len(data)
+            if data_len == 0:
+                break
             assert self.offset + data_len <= self.end_at + 1
             if self.file_mutex:
                 with self.file_mutex:
@@ -201,38 +258,11 @@ class HttpDownloadClipHandler:
         assert self.offset == self.end_at + 1
 
 
-class ContentEncodingProcessor(urllib2.BaseHandler):
-    """A handler to add gzip capabilities to urllib2 requests """
-    # add headers to requests
-
-    def __init__(self):
-        try:
-            self.deflate = lambda data: zlib.decompress(data, -1*zlib.MAX_WBITS)
-        except zlib.error:
-            self.deflate = lambda data: zlib.decompress(data)
-
-    def http_request(self, req):
-        req.add_header("Accept-Encoding", "gzip,deflate")
-        return req
-
-    def http_response(self, req, resp):
-        old_resp = resp
-        if resp.headers.get("content-encoding") == "gzip":
-            gz = gzip.GzipFile(fileobj=BytesIO(resp.read()), mode="r")
-            resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
-            resp.msg = old_resp.msg
-            # deflate
-        if resp.headers.get("content-encoding") == "deflate":
-            gz = BytesIO(self.deflate(resp.read()))
-            resp = urllib2.addinfourl(gz, old_resp.headers, old_resp.url, old_resp.code)
-            resp.msg = old_resp.msg
-        return resp
-
-
 class MiniAxel(HttpUtil):
     def __init__(self, progress_bar=None, retrans=False, timeout=TIMEOUT,
                  debug_lvl=DEBUG_LVL, proxy=None, log=None):
-        HttpUtil.__init__(self, timeout=timeout, debug_lvl=debug_lvl, proxy=proxy)
+        HttpUtil.__init__(self, timeout=timeout, debug_lvl=debug_lvl,
+                          proxy=proxy, zip_encoding=False)
         self.threads = []
         self.progress_bar = progress_bar
         self.retransmission = retrans
@@ -242,7 +272,7 @@ class MiniAxel(HttpUtil):
         self.log = log
 
     def dl(self, url, out, headers=None, n=5):
-        if isinstance(out, file) or isinstance(out, StringIO.StringIO):
+        if isinstance(out, file) or isinstance(out, StringIO):
             self.__dl(url, out, headers=headers, n=n)
         elif os.path.exists(out):
             with open(out, 'rb+') as fp:
@@ -256,7 +286,7 @@ class MiniAxel(HttpUtil):
             info = HttpUtil().head(url)
             size = int(info.getheader('Content-Length'))
             assert info.getheader('Accept-Ranges') == 'bytes'
-        except:
+        except Exception as e:
             if self.log:
                 self.log.exception(e)
             return None
@@ -271,9 +301,12 @@ class MiniAxel(HttpUtil):
         size = self.__head(url)
         clips = self.__div_file(size, n)
 
-        if size and self.retransmission:
+        if size and self.retransmission and not isinstance(fp, StringIO):
             self.history_file = HistoryFile(fp.name)
             clips, cur_size = self.history_file.mk_clips(clips, size)
+
+        # if isinstance(fp, StringIO):
+        #     fp = StringIO(bytearray(size))
 
         # can not retransmission
         if clips is None or size is None or size == 0:
@@ -344,7 +377,7 @@ class MiniAxel(HttpUtil):
 
     class DownloadThread(threadutil.ThreadBase):
 
-        def __init__(self, url, fp, range=None, headers=None, mutex=None,
+        def __init__(self, url, fp, range=None, mutex=None,
                      msgq=None, proxy=None, callback=None, log=None):
             threadutil.ThreadBase.__init__(self)
             self.url = url
@@ -354,31 +387,27 @@ class MiniAxel(HttpUtil):
             self.msgq = msgq
             self.proxy = proxy
             self.callback = callback
-            self.headers = headers
             self.log = log
-            self.dl_handle = None
+            self.downloader = None
 
         def stop(self):
-            threadutil.ThreadBase.stop(self)
-            if self.dl_handle:
-                self.dl_handle.stop_dl()
+            threadutil.ThreadBase.setToStop(self)
+            if self.downloader:
+                self.downloader.stop_dl()
 
         def run(self):
-            self.dl_handle = HttpDownloadClipHandler(fp=self.fp, range=self.range,
-                                                     mutex=self.mutex, log=self.log, callback=self.callback)
-            self.http = HttpUtil(timeout=6, proxy=self.proxy)
+            self.downloader = HttpDownloader(
+                fp=self.fp, range=self.range, file_mutex=self.mutex,
+                log=self.log, callback=self.callback
+            )
+            self.http = HttpUtil(timeout=6, proxy=self.proxy, zip_encoding=False)
             while not self.isSetToStop():
                 try:
-                    if self.dl_handle.range:
-                        self.http.add_header('Range', 'bytes=%s-%s' % self.dl_handle.range)
-                    self.http.fetch(self.url, handler=self.dl_handle, headers=self.headers)
+                    self.downloader.fetch(self.url)
                     return
                 except _socket_timeout:
                     if self.log:
                         self.log.debug('timeout  %s', self.url)
-                # except urllib.URLopener as e:
-                #     if self.log:
-                #         self.log.exception(e)
                 except urllib2.URLError as e:
                     if self.log:
                         self.log.debug('Network not work :(')
@@ -386,9 +415,9 @@ class MiniAxel(HttpUtil):
                     self.msgq.put("error")
                     raise
                 finally:
-                    if self.dl_handle:
-                        self.dl_handle.stop_dl()
-                        self.dl_handle.wait_stop()
+                    if self.downloader:
+                        self.downloader.stop_dl()
+                        self.downloader.wait_stop()
                 _sleep(1)
 
 
@@ -511,28 +540,56 @@ class HistoryFile:
             fp.write(str)
 
 
+def mem_file_test(axel, url, md5, n):
+    import util
+    fp = StringIO()
+    axel.dl(url, out=fp, n=n)
+    ss = util.md5_for_file(fp)
+    del fp
+    if md5 != ss:
+        print '[memTest] md5 not match, n=%d, %s' % (n, ss)
+
+
+def file_test(axel, url, name, n):
+    import util
+    axel.dl(url, out=name, n=n)
+    with open(name, 'rb') as fp:
+        ss = util.md5_for_file(fp)
+    os.remove(name)
+    if name != ss:
+        print '[fTest] md5 not match, n=%d, %s' % (n, ss)
+
+def random_test(axel, n):
+    import util
+    fp = StringIO()
+    axel.dl('http://localhost/w/dl/test.jpg', out=fp, n=n)
+    with io.open('321.jpg', 'wb') as ffp:
+        fp.read = fp.getvalue
+        data = fp.read()
+        print 'asdfasd  ', len(data)
+        ffp.write(data)
+    fp.close()
+    with open('321.jpg', 'rb') as ffp:
+        print util.md5_for_file(ffp)
+
+
+
 def main():
     import util
     urls = {
-        # '1c9d9fc9b01b4d5d1943b92f23b0e38e': 'http://localhost/w/dl/2-2.mp4',
-        '140c4a7c9735dd3006a877a9acca3c31':
-            'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi'
+        '0d851220f47e7aed4615aebbd5cd2c7a': 'http://localhost/w/dl/test.jpg',
+        # '140c4a7c9735dd3006a877a9acca3c31': 'http://cdn.mysql.com/Downloads/Connector-J/mysql-connector-java-gpl-5.1.31.msi',
+        # 'asdf': 'http://vavava.baoyibj.com/chaguan/'
     }
     log = util.get_logger()
     progress_bar = ProgressBar()
     axel = MiniAxel(progress_bar=progress_bar, retrans=True, log=log)
-    for n in range(1, 3):
-        for name, url in urls.items():
+    for n in range(1, 6):
+        for md5, url in urls.items():
             try:
-                print 'test n=', n
-                print name
-                axel.dl(url, out=name, n=n)
-                with open(name, 'rb') as fp:
-                    ss = util.md5_for_file(fp)
-                os.remove(name)
-                if name != ss:
-                    print 'md5 not match, n=%d' % n
-                    print ss
+                random_test(axel, n)
+                mem_file_test(axel, url, md5, n)
+                # file_test(axel, url, md5, n)
             except Exception as e:
                 print e
                 raise
@@ -558,6 +615,7 @@ def test():
         print ''
         # if os.path.exists(name):
         #     os.remove(name)
+
 
 if __name__ == "__main__":
     main()
