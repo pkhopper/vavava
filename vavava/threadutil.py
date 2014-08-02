@@ -102,11 +102,13 @@ class ThreadManager:
 
 class WorkBase:
     def __init__(self):
-        pass
+        self.canceled = False
 
     def work(self, this_thread, log):
         raise NotImplementedError('WorkBase')
 
+    def cancel(self):
+        self.canceled = True
 
 class WorkerThread(ThreadBase):
     def __init__(self, log):
@@ -128,6 +130,9 @@ class WorkerThread(ThreadBase):
                 if not self.works.empty():
                     # self.log.debug('[wt] new work')
                     worker = self.works.get()
+                    if worker.canceled:
+                        self.log.debug('[wkth] get a canceled work')
+                        continue
                     if worker:
                         worker.work(this_thread=self, log=self.log)
             except Exception as e:
@@ -188,7 +193,7 @@ class WorkShop:
         return True
 
 
-class TestWork(WorkBase):
+class WorkTest(WorkBase):
     def __init__(self, name):
         WorkBase.__init__(self)
         self.name = name
@@ -198,7 +203,7 @@ class TestWork(WorkBase):
         _sleep(1)
 
 
-def test_thread():
+def thread_test():
     import time, sys
     class TestThread(ThreadBase):
         def run(self):
@@ -226,13 +231,14 @@ def test_thread():
     print '=============== end'
 
 
-def test_workshop(log):
+def workshop_test(log):
     ws = WorkShop(tmin=5, tmax=10, log=log)
     i = 0
     try:
         ws.serve()
         while not ws.isShopClosed():
-            wk = TestWork(name='work_%05d' % i)
+            wk = WorkTest(name='work_%05d' % i)
+            wk.cancel()
             ws.addWork(wk)
             if i > 1000:
                 _sleep(0.5)
@@ -251,8 +257,8 @@ if __name__ == "__main__":
         from vavava import util
         import logging
         log = util.get_logger(level=logging.DEBUG)
-        test_workshop(log)
-        # test_thread()
+        workshop_test(log)
+        # thread_test()
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)
