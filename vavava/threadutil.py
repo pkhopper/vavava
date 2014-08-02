@@ -69,6 +69,10 @@ class ThreadManager:
                 assert th
                 self.threads.append(th)
 
+    def addThread(self, thread):
+        with self.mutex:
+            self.threads.append(thread)
+
     def length(self):
         with self.mutex:
             return len(self.threads)
@@ -148,7 +152,7 @@ class WorkShop:
         self.log =log
         self.mgr = ThreadManager()
         self.mutex = threading.Lock()
-        for i in xrange(self.tmin):
+        for i in range(self.tmin):
             self.mgr.addThreads([WorkerThread(log=log)])
 
     def __get_th(self):
@@ -160,7 +164,7 @@ class WorkShop:
             if th_len < self.tmax:
                 self.log.warn('[ws] new work-line')
                 new_th = WorkerThread(log=self.log)
-                self.mgr.addThreads([new_th])
+                self.mgr.addThread(new_th)
                 new_th.start()
                 return new_th
             else:
@@ -179,13 +183,13 @@ class WorkShop:
     def serve(self):
         self.mgr.startAll()
 
-    def setShopClose(self):
+    def setStop(self):
         self.mgr.stopAll()
 
-    def waitShopClose(self, timeout=None):
+    def join(self, timeout=None):
         self.mgr.joinAll(timeout=timeout)
 
-    def isShopClosed(self):
+    def isAlive(self):
         with self.mutex:
             for th in self.mgr.threads:
                 if th.isAlive():
@@ -236,9 +240,9 @@ def workshop_test(log):
     i = 0
     try:
         ws.serve()
-        while not ws.isShopClosed():
+        while not ws.isAlive():
             wk = WorkTest(name='work_%05d' % i)
-            wk.cancel()
+            # wk.cancel()
             ws.addWork(wk)
             if i > 1000:
                 _sleep(0.5)
@@ -247,8 +251,8 @@ def workshop_test(log):
     except Exception as e:
         log.exception(e)
     finally:
-        ws.setShopClose()
-        ws.waitShopClose()
+        ws.setStop()
+        ws.join()
         raise
 
 

@@ -40,7 +40,7 @@ class HttpUtil:
         self._headers = DEFAULT_HEADERS
         self.set_debug_level()
         self.handlers = [
-            ContentEncodingProcessor,
+            ContentEncodingProcessor,  # diff with urllib2.build_opener(), disabled by HttpDownloadClipHandler
             urllib2.ProxyHandler,
             urllib2.UnknownHandler,
             urllib2.HTTPHandler,
@@ -201,6 +201,9 @@ class HttpDownloadClipHandler(urllib2.BaseHandler):
         self.buffer_size = bs
         self.callback = callback
 
+    def setStop(self):
+        self.stop_ev.set()
+
     def http_request(self, req):
         if self.range is not None:
             req.add_header('Range', 'bytes=%s-%s' % self.range)
@@ -234,11 +237,13 @@ class HttpDownloadClipHandler(urllib2.BaseHandler):
         self.end_at = size-1
         while not self.stop_ev.is_set():
             data = resp.read(self.buffer_size)
-            if not data:
-                break
             data_len = len(data)
+            if data_len == 0:
+                break
             if not self.fp.closed:
                 self.fp.write(data)
+            else:
+                assert False
             if self.callback and not self.fp.closed:
                 self.callback(self.offset, data_len)
             self.offset += data_len
@@ -265,9 +270,6 @@ class HttpDownloadClipHandler(urllib2.BaseHandler):
             self.offset += data_len
         assert self.offset == self.end_at + 1
 
-    def setStop(self):
-        self.stop_ev.set()
-
 
 class HttpFetcher(HttpUtil):
     """ a simple client of http"""
@@ -275,6 +277,17 @@ class HttpFetcher(HttpUtil):
         HttpUtil.__init__(self)
         self.handler = None
         self.__fetching = False
+
+    @staticmethod
+    def div_file(size, n):
+        minsize = 1024
+        # if n == 1 or size <= minsize:
+        if size <= minsize:
+            return None
+        range_size = size/n
+        ranges = [(i*range_size, i*range_size+range_size-1) for i in range(0, n-1)]
+        ranges.append(((n-1)*range_size, size-1))
+        return ranges
 
     def fetch(self, url, fp, range=None, file_mutex=None,
               bs=HttpDownloadClipHandler.BUFFER_SIZE, callback=None, timeout=None):
@@ -587,7 +600,6 @@ def random_test(axel, n):
     fp.close()
     with open('321.jpg', 'rb') as ffp:
         print util.md5_for_file(ffp)
-
 
 
 def main():
