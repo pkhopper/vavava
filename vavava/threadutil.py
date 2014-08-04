@@ -193,6 +193,52 @@ class WorkBase:
         self.__wkstatus = status
 
 
+class TaskBase:
+    def __init__(self, log=None, callback=None):
+        self.callback = callback
+        self.log = log
+
+        self.__subworks = []
+        self.__err_ev = threading.Event()
+        # self.__err_ev.clear()
+        # 0/1/2/3 init/processing/finish/error
+        self.__status = 0
+
+    def makeSubWorks(self):
+        raise NotImplementedError()
+        # return self.__subworks
+
+    def getSubWorks(self):
+        self.makeSubWorks()
+        self.__status = 0
+
+    def isArchived(self):
+        if self.__status < 2 or self.isErrorHappen():
+            return False
+        for work in self.__subworks:
+            if work.isProcessing():
+                return False
+        return True
+
+    def setError(self):
+        self.__err_ev.set()
+
+    def isErrorHappen(self):
+        return self.__err_ev.isSet()
+
+    def setToStop(self):
+        for work in self.__subworks:
+            work.setToStop()
+
+    def waitForFinish(self):
+        for work in self.__subworks:
+            work.waitForFinish()
+
+    def cleanup(self):
+        if self.callback:
+            self.callback(self)
+
+
 class WorkerThread(ThreadBase):
     def __init__(self, log):
         ThreadBase.__init__(self, log=log)
