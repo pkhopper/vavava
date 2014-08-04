@@ -4,96 +4,124 @@
 import threading
 import Queue
 from random import randint
-from time import sleep as _sleep, time as _time
+from time import sleep as _sleep
 
 
 class ThreadBase:
 
     def __init__(self, log=None):
-        self.__event = threading.Event()
-        self.__thread = threading.Thread(target=self.__run)
-        self.getName = self.__thread.getName
-        self.ident = self.__thread.ident
-        self.isDaemon = self.__thread.isDaemon
-        self.setDaemon = self.__thread.setDaemon
-        self.setName = self.__thread.setName
+        self._thread = threading.Thread(target=self.__run)
+        self.getName = self._thread.getName
+        self.ident = self._thread.ident
+        self.isDaemon = self._thread.isDaemon
+        self.setDaemon = self._thread.setDaemon
+        self.setName = self._thread.setName
+        self.__stop_ev = threading.Event()
+        self.__not_pause_ev = threading.Event()
+        self.__not_pause_ev.set()
         self.__running = False
         self.__mutex = threading.Lock()
         self.log = log
 
     def start(self):
-        self.__event.clear()
-        with self.__mutex:
-            self.__running = True
-        self.__thread.start()
+        self._thread.start()
+        self.__stop_ev.clear()
 
     def run(self):
         raise NotImplementedError()
 
     def isRunning(self):
-        with self.__mutex:
-            return self.__running
+        return self.__running
 
     def isAlive(self):
-        return self.isRunning() and self.__thread.isAlive()
+        return self.__running and self._thread.isAlive()
+
+    def pause(self):
+        self.__not_pause_ev.clear()
+
+    def isPaused(self):
+        return not self.__not_pause_ev.isSet()
+
+    def waitForResume(self, timeout=None):
+        return self.__not_pause_ev.wait(timeout)
+
+    def resume(self):
+        self.__not_pause_ev.set()
 
     def setToStop(self):
-        self.__event.set()
+        self.__stop_ev.set()
+        if self.isPaused():
+            self.resume()
 
-    def isSetToStop(self):
-        return self.__event.isSet()
+    def isSetStop(self):
+        return self.__stop_ev.isSet()
 
     def join(self, timeout=None):
-        self.__thread.join(timeout)
+        self._thread.join(timeout)
 
     def __run(self, *_args, **_kwargs):
-        with self.__mutex:
-            self.__running = True
-        self.run()
-        with self.__mutex:
+        self.__running = True
+        try:
+            self.run()
+        finally:
             self.__running = False
 
 
 class ThreadManager:
     def __init__(self, log=None):
-        self.threads = []
-        self.started = False
-        self.log = log
-        self.mutex = threading.Lock()
+        self.__threads = []
+        self.__mutex = threading.Lock()
+        self.__err_ev = threading.Event()
         self.msg_queue = Queue.Queue()
+        self.log = log
 
     def addThreads(self, threads):
         assert threads
-        with self.mutex:
+        with self.__mutex:
             for th in threads:
-                assert th
-                self.threads.append(th)
+                self.__threads.append(th)
 
     def addThread(self, thread):
-        with self.mutex:
-            self.threads.append(thread)
+        with self.__mutex:
+            self.__threads.append(thread)
 
-    def length(self):
-        with self.mutex:
-            return len(self.threads)
+    def count(self):
+        with self.__mutex:
+            return len(self.__threads)
 
     def startAll(self):
-        for th in self.threads:
-            if not th.isAlive():
-                th.start()
+        with self.__mutex:
+            for th in self.__threads:
+                if not th.isAlive():
+                    th.start()
+
+    def pauseAll(self):
+        with self.__mutex:
+            for th in self.__threads:
+                if not th.isPaused():
+                    th.pause()
+
+    def resumeAll(self):
+        with self.__mutex:
+            for th in self.__threads:
+                if th.isPaused():
+                    th.resume()
+                if not th.isAlive():
+                    th.start()
 
     def stopAll(self):
-        for th in self.threads:
-            if th.isAlive():
-                th.setToStop()
+        with self.__mutex:
+            for th in self.__threads:
+                if th.isAlive():
+                    th.setToStop()
 
     def joinAll(self, timeout=None):
-        for th in self.threads:
+        for th in self.__threads:
             if th.isAlive():
                 th.join(timeout)
 
-    def isWorking(self):
-        for th in self.threads:
+    def allAlive(self):
+        for th in self.__threads:
             if th.isAlive():
                 return True
         return False
@@ -101,49 +129,121 @@ class ThreadManager:
     def reset(self):
         self.stopAll()
         self.joinAll()
-        self.threads = []
+        self.__threads = []
+
+    def getIdleThread(self):
+        for th in self.__threads:
+            if th.idel():
+                return th
+
+    def getThread(self, seq):
+        return self.__threads[seq]
 
 
 class WorkBase:
-    def __init__(self):
-        self.canceled = False
+    def __init__(self, name='_work_'):
+        self.name = name
+        self.__stop_ev = threading.Event()
+        self.__stop_ev.clear()
+        # 0/1/2/3/4 = init/working/finish/cancel/error
+        self.__wkstatus = 0
 
     def work(self, this_thread, log):
         raise NotImplementedError('WorkBase')
 
+    @property
+    def status(self):
+        return self.__wkstatus
+
+    def isProcessing(self):
+        return self.__wkstatus < 2 and not self.isSetStop()
+
+    def setToStop(self):
+        # print 'this work set to stop'
+        self.__stop_ev.set()
+
+    def isSetStop(self):
+        return self.__stop_ev.isSet()
+
     def cancel(self):
-        self.canceled = True
+        self.__stop_ev.set()
+
+    @property
+    def canceled(self):
+        return self.__stop_ev.isSet()
+
+    def waitForFinish(self, timeout=10):
+        while not timeout and self.__wkstatus < 2:
+            _sleep(0.5)
+            if timeout < 0:
+                raise RuntimeError('HttpDLSubWork timeout')
+            timeout -= 0.5
+
+    def _call_by_work_thread_run(self, this_thread, log):
+        self.__stop_ev.clear()
+        self.__wkstatus = 1
+        self.work(this_thread, log)
+        self.__stop_ev.set()
+        self.__wkstatus = 2
+
+    def _call_by_work_thread_set_status(self, status):
+        """
+        @param status: 0/1/2/3/4 = init/working/finish/cancel/error
+        """
+        self.__wkstatus = status
+
 
 class WorkerThread(ThreadBase):
     def __init__(self, log):
         ThreadBase.__init__(self, log=log)
-        self.mutex = threading.Lock()
-        self.works = Queue.Queue()
+        # self.mutex = threading.Lock()
+        self.__wk_qu = Queue.Queue()
+        self.__ev = threading.Event()
+        self.__curr_wk = None
 
     def add_work(self, work):
         assert isinstance(work, WorkBase)
-        self.works.put(work)
+        self.__wk_qu.put(work)
+        self.__ev.set()
 
     def idel(self):
-        return self.works.empty()
+        return self.__wk_qu.empty()
+
+    def setToStop(self):
+        ThreadBase.setToStop(self)
+        if self.__curr_wk:
+            self.__curr_wk.setToStop()
 
     def run(self):
-        while not self.isSetToStop():
-            start_at = _time()
+        while not self.isSetStop():
+            if not self.waitForResume(1):
+                continue
+            if not self.__ev.wait(1):
+                continue
+            if self.__wk_qu.empty():
+                self.__ev.clear()
+                continue
+            self.__curr_wk = self.__wk_qu.get()
             try:
-                if not self.works.empty():
-                    # self.log.debug('[wt] new work')
-                    worker = self.works.get()
-                    if worker.canceled:
-                        self.log.debug('[wkth] get a canceled work')
-                        continue
-                    if worker:
-                        worker.work(this_thread=self, log=self.log)
+                if self.__curr_wk.canceled:
+                    self.log.debug('[wkth] canceled a work')
+                    continue
+                if self.__curr_wk:
+                    self.__curr_wk._call_by_work_thread_run(this_thread=self, log=self.log)
+                    self.__curr_wk._call_by_work_thread_set_status(2)
+                    self.__curr_wk = None
             except Exception as e:
                 self.log.exception(e)
-            duration = _time() - start_at
-            if duration < 1:
-                _sleep(1)
+                self.__curr_wk._call_by_work_thread_set_status(4)
+
+        self.cleanup()
+
+    def cleanup(self):
+        while not self.__wk_qu.empty():
+            # ???? add_work() will make this unstoppable
+            wk = self.__wk_qu.get()
+            wk._call_by_work_thread_set_status(3)
+
 
 class WorkShop:
     def __init__(self, tmin, tmax, log=None):
@@ -151,16 +251,20 @@ class WorkShop:
         self.tmax = tmax
         self.log =log
         self.mgr = ThreadManager()
-        self.mutex = threading.Lock()
+        self.__mutex = threading.Lock()
         for i in range(self.tmin):
             self.mgr.addThreads([WorkerThread(log=log)])
+        self.serve = self.mgr.startAll
+        self.setToStop = self.mgr.stopAll
+        self.join = self.mgr.joinAll
+        self.isAlive = self.mgr.allAlive
 
     def __get_th(self):
-        with self.mutex:
-            for th in self.mgr.threads:
-                if th.idel():
-                    return th
-            th_len = self.mgr.length()
+        with self.__mutex:
+            th = self.mgr.getIdleThread()
+            if th:
+                return th
+            th_len = self.mgr.count()
             if th_len < self.tmax:
                 self.log.warn('[ws] new work-line')
                 new_th = WorkerThread(log=self.log)
@@ -169,7 +273,7 @@ class WorkShop:
                 return new_th
             else:
                 self.log.warn('[ws] all work-lines are busy')
-                return self.mgr.threads[randint(0, th_len-1)]
+                return self.mgr.getThread(randint(0, th_len-1))
 
     def addWork(self, work):
         if not isinstance(work, WorkBase):
@@ -180,29 +284,21 @@ class WorkShop:
         for work in works:
             self.addWork(work)
 
-    def serve(self):
-        self.mgr.startAll()
-
-    def setStop(self):
-        self.mgr.stopAll()
-
-    def join(self, timeout=None):
-        self.mgr.joinAll(timeout=timeout)
-
-    def isAlive(self):
-        with self.mutex:
-            for th in self.mgr.threads:
-                if th.isAlive():
-                    return False
-        return True
-
 
 class WorkTest(WorkBase):
+    TOTAL = 0
+    MUTEX = threading.Lock()
+    @staticmethod
+    def addme():
+        with WorkTest.MUTEX:
+            WorkTest.TOTAL += 1
+
     def __init__(self, name):
         WorkBase.__init__(self)
         self.name = name
 
     def work(self, this_thread, log=None):
+        WorkTest.addme()
         log.debug('am work %s, am in %s', self.name, this_thread.getName())
         _sleep(1)
 
@@ -211,16 +307,16 @@ def thread_test():
     import time, sys
     class TestThread(ThreadBase):
         def run(self):
-            while not self.isSetToStop():
-                sys.stdout.write(self.__thread.name + '\n')
+            while not self.isSetStop():
+                sys.stdout.write(self._thread.name + '\n')
                 sys.stdout.flush()
                 time.sleep(1)
 
     mgr = ThreadManager()
     print '=============== start'
-    for i in xrange(0,1):
+    for i in range(0,1):
         mgr.addThreads([TestThread()])
-    print '=========== ', len(mgr.threads)
+    print '=========== ', len(mgr.__threads)
     try:
         mgr.startAll()
         while mgr.isWorking():
@@ -238,22 +334,36 @@ def thread_test():
 def workshop_test(log):
     ws = WorkShop(tmin=5, tmax=10, log=log)
     i = 0
+    total = 0
+    works = []
     try:
         ws.serve()
-        while not ws.isAlive():
+        while True:
             wk = WorkTest(name='work_%05d' % i)
             # wk.cancel()
             ws.addWork(wk)
-            if i > 1000:
-                _sleep(0.5)
+            works.append(wk)
+            if i > 50:
+                ws.mgr.pauseAll()
+            if i > 100:
+                ws.mgr.resumeAll()
             i += 1
-            log.debug('workers = %d', ws.mgr.length())
+            total += 1
+            log.debug('workers = %d', ws.mgr.count())
+            if i > 200:
+                break
+            if i < 190:
+                _sleep(0.3)
     except Exception as e:
         log.exception(e)
-    finally:
-        ws.setStop()
-        ws.join()
         raise
+    finally:
+        # _sleep(1)
+        ws.setToStop()
+        ws.join()
+        for wk in works:
+            log.debug('[%s] status=%d', wk.name, wk.status)
+        log.debug('total=%d, count=%d', total, WorkTest.TOTAL)
 
 
 if __name__ == "__main__":
