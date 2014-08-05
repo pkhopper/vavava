@@ -107,7 +107,8 @@ class ThreadManager:
         for th in self.__threads:
             if th.idel():
                 idel += 1
-        return '%d/%d' % (idel, len(self.__threads))
+        l = len(self.__threads)
+        return '%d/%d' % (l-idel, l)
 
     def addThreads(self, threads):
         assert threads
