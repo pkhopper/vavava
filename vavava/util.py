@@ -156,3 +156,15 @@ def check_cmd(cmd):
     for cmdpath in os.environ['PATH'].split(':'):
         if os.path.isdir(cmdpath) and cmd in os.listdir(cmdpath):
             return True
+
+class Monitor:
+    def __init__(self, log=None):
+        self.last = time.time()
+        self.log = log
+    def report(self, str, duration=5):
+        if self.last + duration < time.time():
+            if self.log:
+                self.log.error(str)
+            else:
+                sys.stderr.writelines([str, '\n'])
+            self.last = time.time()
