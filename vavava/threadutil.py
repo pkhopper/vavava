@@ -4,11 +4,10 @@
 import threading
 import Queue
 from random import randint
-from time import sleep as _sleep
+from time import sleep as _sleep, time as _time
 
 
 class ThreadBase:
-
     def __init__(self, log=None):
         self._thread = threading.Thread(target=self.__run)
         self.getName = self._thread.getName
@@ -65,6 +64,33 @@ class ThreadBase:
             self.run()
         finally:
             self.__running = False
+
+
+class ServeThreadBase(ThreadBase):
+    def __init__(self, log=None):
+        ThreadBase.__init__(self, log=log)
+        self.__started = False  # set in self.run(), when service is available
+
+    def serve(self, timeout=None):
+        if not self.isAlive():
+            self.start()
+        if not timeout:
+            while not self.isAvailable() and not self.isSetStop():
+                pass
+            return self.isAvailable()
+        else:
+            while timeout  > 0 and not self.isSetStop():
+                if self.isAvailable():
+                    return True
+                timeout -= 0.5
+                _sleep(0.5)
+            return self.isAvailable()
+
+    def isAvailable(self):
+        return self.__started
+
+    def _set_server_available(self, flag=True):
+        self.__started = flag
 
 
 class ThreadManager:
@@ -172,19 +198,17 @@ class WorkBase:
     def canceled(self):
         return self.__stop_ev.isSet()
 
-    def waitForFinish(self, timeout=10):
+    def waitForStop(self, timeout=None):
         while not timeout and self.__wkstatus < 2:
             _sleep(0.5)
             if timeout < 0:
-                raise RuntimeError('HttpDLSubWork timeout')
+                raise RuntimeError('Work timeout')
             timeout -= 0.5
 
     def _call_by_work_thread_run(self, this_thread, log):
         self.__stop_ev.clear()
-        self.__wkstatus = 1
         self.work(this_thread, log)
         self.__stop_ev.set()
-        self.__wkstatus = 2
 
     def _call_by_work_thread_set_status(self, status):
         """
@@ -193,55 +217,9 @@ class WorkBase:
         self.__wkstatus = status
 
 
-class TaskBase:
-    def __init__(self, log=None, callback=None):
-        self.callback = callback
-        self.log = log
-
-        self.__subworks = []
-        self.__err_ev = threading.Event()
-        # self.__err_ev.clear()
-        # 0/1/2/3 init/processing/finish/error
-        self.__status = 0
-
-    def makeSubWorks(self):
-        raise NotImplementedError()
-        # return self.__subworks
-
-    def getSubWorks(self):
-        self.makeSubWorks()
-        self.__status = 0
-
-    def isArchived(self):
-        if self.__status < 2 or self.isErrorHappen():
-            return False
-        for work in self.__subworks:
-            if work.isProcessing():
-                return False
-        return True
-
-    def setError(self):
-        self.__err_ev.set()
-
-    def isErrorHappen(self):
-        return self.__err_ev.isSet()
-
-    def setToStop(self):
-        for work in self.__subworks:
-            work.setToStop()
-
-    def waitForFinish(self):
-        for work in self.__subworks:
-            work.waitForFinish()
-
-    def cleanup(self):
-        if self.callback:
-            self.callback(self)
-
-
-class WorkerThread(ThreadBase):
+class WorkerThread(ServeThreadBase):
     def __init__(self, log):
-        ThreadBase.__init__(self, log=log)
+        ServeThreadBase.__init__(self, log=log)
         # self.mutex = threading.Lock()
         self.__wk_qu = Queue.Queue()
         self.__ev = threading.Event()
@@ -253,7 +231,7 @@ class WorkerThread(ThreadBase):
         self.__ev.set()
 
     def idel(self):
-        return self.__wk_qu.empty()
+        return self.isAvailable() and self.__wk_qu.empty()
 
     def setToStop(self):
         ThreadBase.setToStop(self)
@@ -261,6 +239,7 @@ class WorkerThread(ThreadBase):
             self.__curr_wk.setToStop()
 
     def run(self):
+        self._set_server_available()
         while not self.isSetStop():
             if not self.waitForResume(1):
                 continue
@@ -275,6 +254,7 @@ class WorkerThread(ThreadBase):
                     self.log.debug('[wkth] canceled a work')
                     continue
                 if self.__curr_wk:
+                    self.__curr_wk._call_by_work_thread_set_status(1)
                     self.__curr_wk._call_by_work_thread_run(this_thread=self, log=self.log)
                     self.__curr_wk._call_by_work_thread_set_status(2)
                     self.__curr_wk = None
@@ -282,16 +262,14 @@ class WorkerThread(ThreadBase):
                 self.log.exception(e)
                 self.__curr_wk._call_by_work_thread_set_status(4)
 
-        self.cleanup()
-
-    def cleanup(self):
+        self._set_server_available(False)
         while not self.__wk_qu.empty():
             # ???? add_work() will make this unstoppable
             wk = self.__wk_qu.get()
             wk._call_by_work_thread_set_status(3)
 
 
-class WorkShop:
+class WorkDispatcher:
     def __init__(self, tmin, tmax, log=None):
         self.tmin = tmin
         self.tmax = tmax
@@ -331,54 +309,188 @@ class WorkShop:
             self.addWork(work)
 
 
+class TaskBase:
+    def __init__(self, name='<task>',log=None, callback=None):
+        self.name = name
+        self.log = log
+        self.callback = callback
+        self.subworks = []
+        self.__subtasks = []
+        self.__err_ev = threading.Event()
+        # self.__err_ev.clear()
+        # 0/1/2/3/4 init/processing/finish/canceled/error
+        self.__status = 0
+
+    def getSubWorks(self):
+        raise NotImplementedError()
+
+    def addSubTask(self, task):
+        self.__subtasks.append(task)
+
+    def getSubTasks(self):
+        return self.__subtasks
+
+    @property
+    def status(self):
+        return self.__status
+
+    def call_by_ws_set_status(self, status):
+        self.__status = status
+        if self.__subtasks:
+            for stsk in self.__subtasks:
+                stsk.call_by_ws_set_status(status)
+
+    def isArchived(self):
+        return self.status == 2
+
+    def isError(self):
+        return self.status == 4
+
+    def setToStop(self):
+        for work in self.subworks:
+            work.setToStop()
+
+    def waitForStop(self):
+        for work in self.subworks:
+            work.waitForStop()
+
+    def cleanup(self):
+        pass
+
+
+class WorkShop(ServeThreadBase):
+    def __init__(self, tmin=10, tmax=20, log=None):
+        ServeThreadBase.__init__(self, log=log)
+        self.__task_buff = Queue.Queue()
+        self.__curr_tasks = []
+        self.__wd = WorkDispatcher(tmin=tmin, tmax=tmax, log=log)
+
+    def addTasks(self, tasks):
+        for task in tasks:
+            self.addTask(task)
+
+    def addTask(self, task):
+        assert isinstance(task, TaskBase)
+        if not self.isAvailable():
+            self.log.debug('[wd] can not add task, server is not available')
+            return
+        self.__task_buff.put(task)
+        self.log.debug('[ws] add a work: %s', task.name)
+
+    def idel(self):
+        return self.isAvailable() \
+               and self.__task_buff.empty() \
+               and len(self.__curr_tasks) == 0
+
+    @property
+    def currTaskSize(self):
+        return len(self.__curr_tasks)
+
+    def run(self):
+        self.log.debug('[ws] start serving')
+        self.__wd.serve()
+        self._set_server_available()
+        while not self.isSetStop():
+            curr_task = None
+            start_at = _time()
+            try:
+                if not self.__task_buff.empty():
+                    curr_task = self.__task_buff.get()
+                    self.__curr_tasks.append(curr_task)
+                    curr_task.call_by_ws_set_status(1)
+                    subwks = curr_task.getSubWorks()
+                    if not subwks or len(subwks) == 0:
+                        self.log.debug('[ws] Task has no sub work')
+                    else:
+                        self.__wd.addWorks(subwks)
+                        self.log.debug('[ws] pop a Task: %s', curr_task.name)
+                    curr_task = None
+
+                for i, tk in enumerate(self.__curr_tasks):
+                    wkarchvied = True
+                    for wk in tk.subworks:
+                        if wk.status != 2:
+                            wkarchvied = False
+                        elif wk.status == 4:
+                            tk.call_by_ws_set_status(4)
+                            tk.setToStop()
+                            tk.waitForStop()
+                            tk.cleanup()
+                            self.log.debug('[ws] Task err: %s', tk.name)
+                            del self.__curr_tasks[i]
+                        elif wk.status == 4:
+                            tk.call_by_ws_set_status(3)
+                            tk.setToStop()
+                            tk.waitForStop()
+                            tk.cleanup()
+                            self.log.debug('[ws] Task canceled: %s', tk.name)
+                            del self.__curr_tasks[i]
+                    if wkarchvied:
+                        tk.call_by_ws_set_status(2)
+                        tk.cleanup()
+                        self.log.debug('[ws] Task done: %s', tk.name)
+                        del self.__curr_tasks[i]
+                        break
+            except Exception as e:
+                if curr_task:
+                    curr_task.call_by_ws_set_status(4)
+                self.log.exception(e)
+            finally:
+                duration = _time() - start_at
+                if duration < 0.8:
+                    _sleep(0.5)
+        self._set_server_available(flag=False)
+        self.__cleanUp()
+
+    def __cleanUp(self):
+        self.__wd.setToStop()
+        self.__wd.join()
+        for i, tk in enumerate(self.__curr_tasks):
+            if tk.isError():
+                tk.call_by_ws_set_status(4)
+                tk.setToStop()
+                tk.waitForStop()
+                self.log.debug('[ws] Task err: %s', tk.name)
+            elif tk.isArchived():
+                tk.call_by_ws_set_status(2)
+                self.log.debug('[ws] Task done: %s', tk.name)
+            else:
+                tk.call_by_ws_set_status(3)
+                tk.setToStop()
+                tk.waitForStop()
+                self.log.debug('[ws] Task not finish: %s', tk.name)
+            tk.cleanup()
+            # del self.__curr_tasks[i]
+        while not self.__task_buff.empty():
+            tk = self.__task_buff.get()
+            # tk.cleanup()
+            tk.call_by_ws_set_status(3)
+        self.log.debug('[ws] stop serving')
+
+
 class WorkTest(WorkBase):
     TOTAL = 0
+    EXEC_TOTAL = 0
     MUTEX = threading.Lock()
     @staticmethod
     def addme():
         with WorkTest.MUTEX:
-            WorkTest.TOTAL += 1
+            WorkTest.EXEC_TOTAL += 1
 
     def __init__(self, name):
         WorkBase.__init__(self)
         self.name = name
+        with WorkTest.MUTEX:
+            WorkTest.TOTAL += 1
 
     def work(self, this_thread, log=None):
         WorkTest.addme()
-        log.debug('am work %s, am in %s', self.name, this_thread.getName())
+        log.error('am work %s, am in %s', self.name, this_thread.getName())
         _sleep(1)
 
 
-def thread_test():
-    import time, sys
-    class TestThread(ThreadBase):
-        def run(self):
-            while not self.isSetStop():
-                sys.stdout.write(self._thread.name + '\n')
-                sys.stdout.flush()
-                time.sleep(1)
-
-    mgr = ThreadManager()
-    print '=============== start'
-    for i in range(0,1):
-        mgr.addThreads([TestThread()])
-    print '=========== ', len(mgr.__threads)
-    try:
-        mgr.startAll()
-        while mgr.isWorking():
-            mgr.joinAll(timeout=1)
-            print 'main ========='
-            time.sleep(1)
-    except KeyboardInterrupt as e:
-        print 'stopping'
-        mgr.stopAll()
-        mgr.joinAll()
-        print 'stopped'
-    print '=============== end'
-
-
-def workshop_test(log):
-    ws = WorkShop(tmin=5, tmax=10, log=log)
+def wd_test(log):
+    ws = WorkDispatcher(tmin=5, tmax=10, log=log)
     i = 0
     total = 0
     works = []
@@ -395,7 +507,7 @@ def workshop_test(log):
                 ws.mgr.resumeAll()
             i += 1
             total += 1
-            log.debug('workers = %d', ws.mgr.count())
+            log.error('workers = %d', ws.mgr.count())
             if i > 200:
                 break
             if i < 190:
@@ -408,8 +520,90 @@ def workshop_test(log):
         ws.setToStop()
         ws.join()
         for wk in works:
-            log.debug('[%s] status=%d', wk.name, wk.status)
-        log.debug('total=%d, count=%d', total, WorkTest.TOTAL)
+            log.error('[%s] status=%d', wk.name, wk.status)
+        log.error('total=%d, count=%d', total, WorkTest.TOTAL)
+
+
+class TaskTest(TaskBase):
+    TOTAL = 0
+    EXEC_TOTAL = 0
+    MUTEX = threading.Lock()
+    @staticmethod
+    def addme():
+        with TaskTest.MUTEX:
+            TaskTest.EXEC_TOTAL += 1
+
+    def __init__(self, sub_size, name, log):
+        TaskBase.__init__(self, name=name, log=log)
+        self.sub_size = sub_size
+        with TaskTest.MUTEX:
+            TaskTest.TOTAL += 1
+
+    def getSubWorks(self):
+        TaskTest.addme()
+        self.subworks = []
+        for i in range(self.sub_size):
+            self.subworks.append(WorkTest('t_%s_%d' % (self.name, i)))
+        log.error(' ........... am Task %s, subworks=%d', self.name, len(self.subworks))
+        _sleep(0.7)
+        TaskTest.addme()
+        return self.subworks
+
+    def cleanup(self):
+        self.log.error(' ========== Task cleanup: %s, %d, %d' % (self.name, self.status, self.sub_size))
+
+
+def ws_test(log):
+    ws = WorkShop(tmin=5, tmax=10, log=log)
+    i = 0
+    total = 0
+    tasks = []
+    try:
+        ws.serve()
+        while True:
+            task = TaskTest(5, name='T_%05d' % i, log=log)
+            # wk.cancel()
+            ws.addTask(task)
+            tasks.append(task)
+            i += 1
+            total += 1
+            log.error(' ||||||||||||||| tasks = %d', ws.currTaskSize)
+            if i < 190:
+                _sleep(0.3)
+            else:
+                _sleep(0.6)
+            if i > 200:
+                break
+    except Exception as e:
+        log.exception(e)
+        raise
+    finally:
+        # _sleep(1)
+        ws.setToStop()
+        ws.join()
+        canceled_total = unknow_total = archived_total = err_total = 0
+        for task in tasks:
+            log.error('[%s] status=%d', task.name, task.status)
+            if task.isArchived():
+                archived_total += 1
+            elif task.isError():
+                err_total += 1
+            elif task.status == 3:
+                canceled_total += 1
+            else:
+                unknow_total += 1
+            # if task.isArchived() == task.isError():
+            #     _sleep(0.3)
+            #     for wk in task.subworks:
+            #         print wk.status
+        log.error('TASK: total=%d, exec=%d, arc=%d, canc=%d, err=%d, un=%d',
+                  total, TaskTest.EXEC_TOTAL, archived_total, canceled_total,
+                  err_total, unknow_total)
+        log.error('WORK: total=%d, exec=%d', WorkTest.TOTAL, WorkTest.EXEC_TOTAL)
+        assert unknow_total == 0
+        assert total == TaskTest.TOTAL
+        assert archived_total + err_total + canceled_total == TaskTest.TOTAL
+        # assert canceled_total == TaskTest.TOTAL - TaskTest.EXEC_TOTAL
 
 
 if __name__ == "__main__":
@@ -417,8 +611,8 @@ if __name__ == "__main__":
         from vavava import util
         import logging
         log = util.get_logger(level=logging.DEBUG)
-        workshop_test(log)
-        # thread_test()
+        # wd_test(log)
+        ws_test(log)
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)
