@@ -176,8 +176,9 @@ class ThreadManager:
 
 
 class WorkBase:
-    def __init__(self, name='_work_'):
+    def __init__(self, name='_work_', parent=None):
         self.name = name
+        self.parent = parent
         self.__stop_ev = threading.Event()
         self.__stop_ev.clear()
         # 0/1/2/3/4 = init/working/finish/cancel/error
@@ -185,6 +186,9 @@ class WorkBase:
 
     def work(self, this_thread, log):
         raise NotImplementedError('WorkBase')
+
+    def setParent(self, parent):
+        self.parent = parent
 
     @property
     def status(self):
@@ -322,14 +326,13 @@ class WorkDispatcher:
 
 
 class TaskBase:
-    def __init__(self, name='<task>',log=None, callback=None):
+    def __init__(self, parent=None, name='<task>',log=None):
+        self.parent = parent
         self.name = name
         self.log = log
-        self.callback = callback
         self.subworks = []
         self.__subtasks = []
         self.__err_ev = threading.Event()
-        # self.__err_ev.clear()
         # 0/1/2/3/4 init/processing/finish/canceled/error
         self.__status = 0
 
@@ -341,6 +344,9 @@ class TaskBase:
 
     def getSubTasks(self):
         return self.__subtasks
+
+    def setParent(self, parent):
+        self.parent = parent
 
     @property
     def status(self):
@@ -401,8 +407,7 @@ class WorkShop(ServeThreadBase):
         monitor = _Moniter(self.log)
         while not self.isSetStop():
             str = '[ws]@@@@@@@@@@@@@@@@ tsk=%d, curr=%d, %s'% (
-                self.__task_buff.qsize(),
-                len(self.__curr_tasks), self.__wd.mgr.info())
+                self.__task_buff.qsize(), len(self.__curr_tasks), self.__wd.mgr.info())
             monitor.report(str)
             curr_task = None
             start_at = _time()
@@ -472,11 +477,8 @@ class WorkShop(ServeThreadBase):
                 tk.setToStop()
                 tk.waitForStop()
                 self.log.debug('[ws] Task not finish: %s', tk.name)
-            # tk.cleanup()
-            # del self.__curr_tasks[i]
         while not self.__task_buff.empty():
             tk = self.__task_buff.get()
-            # tk.cleanup()
             tk.call_by_ws_set_status(3)
         self.log.debug('[ws] stop serving')
 
@@ -500,7 +502,7 @@ class WorkTest(WorkBase):
             WorkTest.EXEC_TOTAL += 1
 
     def __init__(self, name):
-        WorkBase.__init__(self)
+        WorkBase.__init__(self, parent=None)
         self.name = name
         with WorkTest.MUTEX:
             WorkTest.TOTAL += 1
