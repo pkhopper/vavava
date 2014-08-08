@@ -20,7 +20,7 @@ class ThreadBase:
         self.__not_pause_ev = threading.Event()
         self.__not_pause_ev.set()
         self.__running = False
-        self.__mutex = threading.Lock()
+        self.__mutex = threading.RLock()
         self.log = log
 
     def start(self):
@@ -57,7 +57,10 @@ class ThreadBase:
         return self.__stop_ev.isSet()
 
     def join(self, timeout=None):
+        import sys
         self._thread.join(timeout)
+        sys.stderr.write('====== %s' % self.getName())
+        sys.stderr.flush()
 
     def __run(self, *_args, **_kwargs):
         self.__running = True
@@ -97,7 +100,7 @@ class ServeThreadBase(ThreadBase):
 class ThreadManager:
     def __init__(self, log=None):
         self.__threads = []
-        self.__mutex = threading.Lock()
+        self.__mutex = threading.RLock()
         self.__err_ev = threading.Event()
         self.msg_queue = Queue.Queue()
         self.log = log
@@ -139,8 +142,9 @@ class ThreadManager:
     def stopAll(self):
         with self.__mutex:
             for th in self.__threads:
-                if th.isAlive():
-                    th.setToStop()
+                th.setToStop()
+                # if th.isAlive():
+                #     th.setToStop()
 
     def joinAll(self, timeout=None):
         for th in self.__threads:
@@ -293,7 +297,7 @@ class WorkDispatcher:
         self.tmax = tmax
         self.log =log
         self.mgr = ThreadManager()
-        self.__mutex = threading.Lock()
+        self.__mutex = threading.RLock()
         for i in range(self.tmin):
             self.mgr.addThreads([WorkerThread(log=log)])
         self.serve = self.mgr.startAll
@@ -503,13 +507,15 @@ class WorkShop(ServeThreadBase):
                 self.log.debug('[ws] Task not finish: %s', tk.name)
 
             self.__clean.addWork(WorkShop.SerWork(tk))
-            self.log.debug('[ws] cleanup 1')
 
         while not self.__task_buff.empty():
             tk = self.__task_buff.get()
             tk.call_by_ws_set_status(3)
             self.__clean.addWork(WorkShop.SerWork(tk))
-            self.log.debug('[ws] cleanup 2')
+            self.log.debug('[ws] cleanup')
+
+    def allTasksDone(self):
+        return self.__task_buff.empty() and len(self.__curr_tasks) == 0
 
     def idel(self):
         return self.isAvailable() \
@@ -526,14 +532,14 @@ class WorkShop(ServeThreadBase):
             self.task = task
 
         def work(self, this_thread, log):
-            log.debug('[SerWork] cleanup')
             self.task.cleanup()
+            log.debug('[SerWork] cleanup')
 
 
 class WorkTest(WorkBase):
     TOTAL = 0
     EXEC_TOTAL = 0
-    MUTEX = threading.Lock()
+    MUTEX = threading.RLock()
     @staticmethod
     def addme():
         with WorkTest.MUTEX:
@@ -590,7 +596,7 @@ class TaskTest(TaskBase):
     TOTAL = 0
     EXEC_TOTAL = 0
     CLEANUP = 0
-    MUTEX = threading.Lock()
+    MUTEX = threading.RLock()
     @staticmethod
     def addme():
         with TaskTest.MUTEX:
@@ -611,7 +617,7 @@ class TaskTest(TaskBase):
         subworks = []
         for i in range(self.sub_size):
             subworks.append(WorkTest('t_%s_%d' % (self.name, i)))
-        log.error(' ........... am Task %s, subworks=%d', self.name, len(subworks))
+        self.log.error(' ........... am Task %s, subworks=%d', self.name, len(subworks))
         _sleep(0.1)
         return subworks
 
@@ -620,7 +626,10 @@ class TaskTest(TaskBase):
         self.log.error(' ========== Task cleanup: %s, %d, %d' % (self.name, self.status, self.sub_size))
 
 
-def ws_test(log):
+def ws_test(log=None):
+    if log is None:
+        import util
+        log = util.get_logger()
     ws = WorkShop(tmin=5, tmax=10, log=log)
     i = 0
     total = 0

@@ -7,6 +7,7 @@ import os
 
 from vavava import util
 from vavava import httputil
+from vavava import threadutil
 
 sys.path.insert(0, '.')
 
@@ -27,54 +28,9 @@ class TestHttputil(unittest.TestCase):
         content = client.get(url)
         print len(content.decode('utf8'))
 
-    def test_post(self):
-        print 'test_post'
-        pass
-        # print 'test httputil.post()'
-        # url = r'http://www.2kdy.com/search.asp'
-        # post = {'searchword': r'lie'}
-        # client = httputil.HttpUtil(charset='gb2312')
-        # content=client.post(url, post)
-        # print content
-
     def test_fetch(self):
         print 'test httputil.fetch()'
-        client = httputil.HttpUtil()
-        #client.set_proxy({"http":"http://127.0.0.1:8087"})
-        with open(TestHttputil.orig_md5, 'w') as fp:
-            handle = httputil.HttpDownloadClipHandler(fp)
-            client.fetch(TestHttputil.url, handle)
-        with open(TestHttputil.orig_md5, 'r') as fp:
-            self.assertTrue(TestHttputil.orig_md5 == util.md5_for_file(fp))
-        os.remove(TestHttputil.orig_md5)
-
-    def test_miniaxel(self):
-        print 'test_miniaxel'
-        multi = r'test_multi'
-        single = r'test_single'
-        multi_md5 = singl_md5 = ''
-        try:
-            progress_bar = httputil.ProgressBar()
-            axel = httputil.MiniAxel(progress_bar=progress_bar, retrans=True)
-            axel.dl(TestHttputil.url, out=multi, n=9)
-            axel.dl(TestHttputil.url, out=single, n=1)
-            with open(multi, 'rb') as fp:
-                multi_md5 = util.md5_for_file(fp)
-                print ''
-                print multi_md5
-            with open(single, 'rb') as fp:
-                singl_md5 = util.md5_for_file(fp)
-                print ''
-                print singl_md5
-        except Exception as e:
-            print e
-        finally:
-            if os.path.exists(multi):
-                os.remove(multi)
-            if os.path.exists(single):
-                os.remove(single)
-        self.assertTrue(TestHttputil.orig_md5 == multi_md5)
-        self.assertTrue(TestHttputil.orig_md5 == singl_md5)
+        httputil.main_test()
 
 
 class TestUtil(unittest.TestCase):
@@ -96,11 +52,18 @@ class TestSqliteutil(unittest.TestCase):
         print 'test sqliteutil ok'
 
 
+class TestThreadutil(unittest.TestCase):
+    def test_ok(self):
+        print 'test threadutil ok'
+        threadutil.ws_test()
+
+
 def make_suites():
     test_cases = {
         'httputil': 'TestHttputil',
         'util': 'TestUtil',
-        'sqliteuitl': 'TestSqliteutil'
+        'sqliteuitl': 'TestSqliteutil',
+        'threadutil': 'TestThreadutil'
     }
     suite = unittest.TestSuite()
     if len(sys.argv) == 1:

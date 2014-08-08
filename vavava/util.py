@@ -168,3 +168,23 @@ class Monitor:
             else:
                 sys.stderr.writelines([str, '\n'])
             self.last = time.time()
+
+from io import BytesIO
+class SynFileContainer:
+    def __init__(self, fp):
+        self.mutex = threading.Lock()
+        if isinstance(fp, file):
+            self.__fp = fp
+            self.name = fp.name
+        elif isinstance(fp, BytesIO):
+            self.__fp = fp
+            self.name = 'memory_file.%s' % hash(fp)
+        else:
+            raise ValueError('must be a fiel or ByteIO')
+
+    def seek_write(self, b, pos=-1, whence=0):
+        with self.mutex:
+            if not self.__fp.closed:
+                if pos != -1:
+                    self.__fp.seek(pos, whence)
+                self.__fp.write(b)
