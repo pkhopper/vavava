@@ -57,10 +57,7 @@ class ThreadBase:
         return self.__stop_ev.isSet()
 
     def join(self, timeout=None):
-        import sys
         self._thread.join(timeout)
-        sys.stderr.write('====== %s' % self.getName())
-        sys.stderr.flush()
 
     def __run(self, *_args, **_kwargs):
         self.__running = True
