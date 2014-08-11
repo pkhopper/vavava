@@ -60,7 +60,7 @@ class BaseConfig:
         args = self.get_args(self.argv)
         if args:
             for k, v in args.__dict__.items():
-                if hasattr(self, k) and not v:
+                if hasattr(self, k) and v is None:
                     continue
                 setattr(self, k, v)
 
