@@ -429,7 +429,7 @@ class WorkShop(ServeThreadBase):
         self._set_server_available()
         monitor = _Moniter(self.log)
         while not self.isSetStop():
-            monitor.report(self.info())
+            # monitor.report(self.info())
             curr_task = None
             start_at = _time()
             try:
