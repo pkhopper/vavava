@@ -116,6 +116,10 @@ class HttpUtil:
                 raise ValueError('content-type filed not found.')
             return charset.group(1)
 
+    def add_headers(self, headers):
+        for k, v in headers.items():
+            self.add_header(k, v)
+
     def add_header(self, key, value):
         self._headers[key] = value
 
@@ -307,12 +311,12 @@ def ttttt(n, test_urls, log):
     for md5, url in test_urls.items():
         with open(md5, 'w') as fp:
             size = HttpFetcher.get_content_len(url)
-            ranges = HttpFetcher.div_file(size, 3)
-            assert ranges
+            clips = HttpFetcher.div_file(size, 3)
+            assert clips
             if n == 1:
                 fetcher.fetch(url, fp)
             else:
-                for r in ranges:
+                for r in clips:
                     fetcher.fetch(url, fp, data_range=r)
             log.info('========= checking n=%d ===================', n)
         with open(md5, 'r') as fp:

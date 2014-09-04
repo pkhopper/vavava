@@ -73,6 +73,10 @@ def reg_helper(text, reg_str="", mode=re.I | re.S):
     reg = re.compile(reg_str, mode)
     return reg.findall(text)
 
+def reg_1(pattern, string):
+    m = re.search(pattern, string)
+    if m:
+        return m.group(1)
 
 def import_any_module(name):
     """ import module at any place """

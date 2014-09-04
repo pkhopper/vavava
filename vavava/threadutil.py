@@ -5,7 +5,7 @@ import threading
 import Queue
 from random import randint
 from time import sleep as _sleep, time as _time
-from util import Monitor as _Moniter
+from util import Monitor as _Moniter, get_logger as _get_logger
 
 
 class ThreadBase:
@@ -22,6 +22,8 @@ class ThreadBase:
         self.__running = False
         self.__mutex = threading.RLock()
         self.log = log
+        if self.log is None:
+            self.log = _get_logger()
 
     def start(self):
         self._thread.start()
