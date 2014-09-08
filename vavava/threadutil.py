@@ -235,7 +235,7 @@ class WorkBase:
 
 
 class WorkerThread(ServeThreadBase):
-    def __init__(self, log):
+    def __init__(self, log=None):
         ServeThreadBase.__init__(self, log=log)
         self.__wk_qu = Queue.Queue()
         self.__ev = threading.Event()
