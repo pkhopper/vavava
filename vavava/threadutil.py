@@ -101,7 +101,7 @@ class ThreadManager:
         self.__threads = []
         self.__mutex = threading.RLock()
         self.__err_ev = threading.Event()
-        self.msg_queue = Queue.Queue()
+        # self.msg_queue = Queue.Queue()
         self.log = log
 
     def addThreads(self, threads):
@@ -235,12 +235,13 @@ class WorkBase:
 
 
 class WorkerThread(ServeThreadBase):
-    def __init__(self, log=None):
+    def __init__(self, standalone=None, log=None):
         ServeThreadBase.__init__(self, log=log)
         self.__wk_qu = Queue.Queue()
         self.__ev = threading.Event()
         self.__curr_wk = None
         self.__busy = False
+        self.__standalone = standalone
 
     def add_work(self, work):
         assert isinstance(work, WorkBase)
@@ -252,6 +253,10 @@ class WorkerThread(ServeThreadBase):
 
     def size(self):
         return self.__wk_qu.qsize()
+
+    @property
+    def isStandalone(self):
+        return self.__standalone
 
     def setToStop(self):
         ThreadBase.setToStop(self)
@@ -283,29 +288,35 @@ class WorkerThread(ServeThreadBase):
             except Exception as e:
                 self.log.exception(e)
                 self.__curr_wk._call_by_work_thread_set_status(4)
+            finally:
+                if self.__standalone and self.__wk_qu.empty():
+                    break
 
         self._set_server_available(False)
         while not self.__wk_qu.empty():
             wk = self.__wk_qu.get()
             wk._call_by_work_thread_set_status(3)
+        # self.log.debug('%s, stop', self.getName())
 
 
 class WorkDispatcher:
-    def __init__(self, tmin, tmax, log=None):
+    def __init__(self, tmin, tmax, standalone_works=None, log=None):
         self.tmin = tmin
         self.tmax = tmax
         self.log =log
         self.mgr = ThreadManager()
         self.__mutex = threading.RLock()
-        for i in range(self.tmin):
-            self.mgr.addThreads([WorkerThread(log=log)])
-        self.serve = self.mgr.startAll
         self.setToStop = self.mgr.stopAll
-        self.join = self.mgr.joinAll
         self.isAlive = self.mgr.allAlive
         self.info = self.mgr.info
+        self.__is_serving = False
+        if standalone_works:
+            self.addWorks(standalone_works, standalone=True)
+        else:
+            for i in range(self.tmin):
+                self.mgr.addThreads([WorkerThread(log=log)])
 
-    def __get_th(self):
+    def __get_th(self, standalone=False):
         with self.__mutex:
             th = self.mgr.getIdleThread()
             if th:
@@ -313,22 +324,31 @@ class WorkDispatcher:
             th_len = self.mgr.count()
             if th_len < self.tmax:
                 self.log.warn('[ws] new work-line')
-                new_th = WorkerThread(log=self.log)
+                new_th = WorkerThread(standalone=standalone, log=self.log)
                 self.mgr.addThread(new_th)
-                new_th.start()
+                if self.__is_serving:
+                    new_th.start()
                 return new_th
             else:
                 self.log.warn('[ws] all work-lines are busy')
                 return self.mgr.getThread(randint(0, th_len-1))
 
-    def addWork(self, work):
+    def addWork(self, work, standalone=False):
         if not isinstance(work, WorkBase):
             raise ValueError('not a Work class')
-        self.__get_th().add_work(work=work)
+        self.__get_th(standalone=standalone).add_work(work=work)
 
-    def addWorks(self, works):
+    def addWorks(self, works, standalone=False):
         for work in works:
-            self.addWork(work)
+            self.addWork(work, standalone=standalone)
+
+    def serve(self):
+        self.mgr.startAll()
+        self.__is_serving = True
+
+    def joinAll(self, timeout=None):
+        self.mgr.joinAll(timeout)
+        self.__is_serving = False
 
 
 class TaskBase:
@@ -483,10 +503,10 @@ class WorkShop(ServeThreadBase):
 
         self._set_server_available(flag=False)
         self.__wd.setToStop()
-        self.__wd.join()
+        self.__wd.joinAll()
         self.__cleanUp()
         self.__clean.setToStop()
-        self.__clean.join()
+        self.__clean.joinAll()
         self.log.debug('[ws] stop serving')
 
     def __cleanUp(self):
@@ -585,10 +605,27 @@ def wd_test(log):
     finally:
         # _sleep(1)
         ws.setToStop()
-        ws.join()
+        ws.joinAll()
         for wk in works:
             log.error('[%s] status=%d', wk.name, wk.status)
         log.error('total=%d, count=%d', total, WorkTest.TOTAL)
+
+def wd_test_1(log):
+    wks = [WorkTest(name='work_%05d' % i) for i in range(20)]
+    wd = WorkDispatcher(tmin=5, tmax=10, standalone_works=wks, log=log)
+    try:
+        wd.serve()
+        wd.joinAll()
+    except Exception as e:
+        log.exception(e)
+        raise
+    finally:
+        # _sleep(1)
+        wd.setToStop()
+        wd.joinAll()
+        for wk in wks:
+            log.error('[%s] status=%d', wk.name, wk.status)
+        log.error('total=%d', WorkTest.TOTAL)
 
 
 class TaskTest(TaskBase):
@@ -687,7 +724,8 @@ if __name__ == "__main__":
         import logging
         log = util.get_logger(level=logging.DEBUG)
         # wd_test(log)
-        ws_test(log)
+        wd_test_1(log)
+        # ws_test(log)
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)

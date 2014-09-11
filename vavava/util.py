@@ -192,3 +192,14 @@ class SynFileContainer:
                 if pos != -1:
                     self.__fp.seek(pos, whence)
                 self.__fp.write(b)
+
+def get_local_ip(ifname='eth0'):
+    import socket
+    import fcntl
+    import struct
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    return socket.inet_ntoa(fcntl.ioctl(
+        s.fileno(),
+        0x8915,  # SIOCGIFADDR
+        struct.pack('256s', ifname[:15])
+    )[20:24])

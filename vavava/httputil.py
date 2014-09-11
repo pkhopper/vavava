@@ -24,6 +24,20 @@ DEFAULT_HEADERS = {
 }
 
 
+
+def http_get(url, retry=None):
+    if not retry:
+        return HttpUtil().get(url)
+    while retry > 0:
+        retry -= 1
+        try:
+            return HttpUtil().get(url)
+        except KeyboardInterrupt as e:
+            raise e
+        except Exception: # urllib2.HTTPError, urllib2.URLError:
+            pass
+
+
 class HttpUtil:
     """ a simple client of http"""
     def __init__(self):
