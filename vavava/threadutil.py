@@ -7,6 +7,12 @@ from random import randint
 from time import sleep as _sleep, time as _time
 from util import Monitor as _Moniter, get_logger as _get_logger
 
+# 0/1/2/3/4 = init/working/finish/cancel/error
+ST_INIT = 0
+ST_WORKING = 1
+ST_FINISHED = 2
+ST_CANCEL = 3
+ST_ERROR = 4
 
 class ThreadBase:
     def __init__(self, log=None):
@@ -101,7 +107,6 @@ class ThreadManager:
         self.__threads = []
         self.__mutex = threading.RLock()
         self.__err_ev = threading.Event()
-        # self.msg_queue = Queue.Queue()
         self.log = log
 
     def addThreads(self, threads):
@@ -186,7 +191,7 @@ class WorkBase:
         self.__stop_ev = threading.Event()
         self.__stop_ev.clear()
         # 0/1/2/3/4 = init/working/finish/cancel/error
-        self.__wkstatus = 0
+        self.__status = ST_INIT
 
     def work(self, this_thread, log):
         raise NotImplementedError('WorkBase')
@@ -196,13 +201,12 @@ class WorkBase:
 
     @property
     def status(self):
-        return self.__wkstatus
+        return self.__status
 
-    def isProcessing(self):
-        return self.__wkstatus < 2 and not self.isSetStop()
+    def isProcessing(self): # working or just initialised
+        return self.__status < ST_FINISHED and not self.isSetStop()
 
     def setToStop(self):
-        # print 'this work set to stop'
         self.__stop_ev.set()
 
     def isSetStop(self):
@@ -216,7 +220,7 @@ class WorkBase:
         return self.__stop_ev.isSet()
 
     def waitForStop(self, timeout=None):
-        while not timeout and self.__wkstatus < 2:
+        while not timeout and self.__status < ST_FINISHED:
             _sleep(0.5)
             if timeout < 0:
                 raise RuntimeError('Work timeout')
@@ -228,10 +232,7 @@ class WorkBase:
         self.__stop_ev.set()
 
     def _call_by_work_thread_set_status(self, status):
-        """
-        @param status: 0/1/2/3/4 = init/working/finish/cancel/error
-        """
-        self.__wkstatus = status
+        self.__status = status
 
 
 class WorkerThread(ServeThreadBase):
@@ -279,15 +280,15 @@ class WorkerThread(ServeThreadBase):
                     self.log.debug('[wkth] canceled a work')
                     continue
                 if self.__curr_wk:
-                    self.__curr_wk._call_by_work_thread_set_status(1)
+                    self.__curr_wk._call_by_work_thread_set_status(ST_WORKING)
                     self.__busy = True
                     self.__curr_wk._call_by_work_thread_run(this_thread=self, log=self.log)
                     self.__busy = False
-                    self.__curr_wk._call_by_work_thread_set_status(2)
+                    self.__curr_wk._call_by_work_thread_set_status(ST_FINISHED)
                     self.__curr_wk = None
             except Exception as e:
                 self.log.exception(e)
-                self.__curr_wk._call_by_work_thread_set_status(4)
+                self.__curr_wk._call_by_work_thread_set_status(ST_ERROR)
             finally:
                 if self.__standalone and self.__wk_qu.empty():
                     break
@@ -295,7 +296,7 @@ class WorkerThread(ServeThreadBase):
         self._set_server_available(False)
         while not self.__wk_qu.empty():
             wk = self.__wk_qu.get()
-            wk._call_by_work_thread_set_status(3)
+            wk._call_by_work_thread_set_status(ST_CANCEL)
         # self.log.debug('%s, stop', self.getName())
 
 
@@ -359,20 +360,32 @@ class TaskBase:
         self.__subworks = None
         self.__err_ev = threading.Event()
         # 0/1/2/3/4 init/processing/finish/canceled/error
-        self.__status = 0
+        self.__status = ST_INIT
 
-    def makeSubWorks(self):
-        """  """
-        raise NotImplementedError()
+    # def makeSubWorks(self):
+    #     """  """
+    #     raise NotImplementedError()
+
+    # def getSubWorks(self):
+    #     if not self.__subworks:
+    #         self.__subworks = self.makeSubWorks()
+    #     return self.__subworks
+
+    def addSubWorks(self, subworks):
+        if self.__subworks is None:
+            self.__subworks = []
+        for sw in subworks:
+            self.__subworks.append(sw)
+        if not self.__subworks:
+            print ''
+
+    @property
+    def subWorks(self):
+        return self.__subworks
 
     def cleanup(self):
-        """ optional, server will some cleanup work """
+        """ optional, server will do some cleanup work """
         pass
-
-    def getSubWorks(self):
-        if not self.__subworks:
-            self.__subworks = self.makeSubWorks()
-        return self.__subworks
 
     def setParent(self, parent):
         self.parent = parent
@@ -381,23 +394,23 @@ class TaskBase:
     def status(self):
         return self.__status
 
-    def call_by_ws_set_status(self, status):
+    def _call_by_ws_set_status(self, status):
         self.__status = status
         # if self.__subtasks:
         #     for stsk in self.__subtasks:
-        #         stsk.call_by_ws_set_status(status)
+        #         stsk._call_by_ws_set_status(status)
 
     def isArchived(self):
-        if self.status == 0: # for sub tasks, witch status will not be set auto
+        if self.status == ST_INIT: # for sub tasks, witch status will not be set auto
             for sbwk in self.__subworks:
-                if sbwk.status != 2:
+                if sbwk.status != ST_FINISHED:
                     return False
             return True
         else:
-            return self.status == 2
+            return self.status == ST_FINISHED
 
     def isError(self):
-        return self.status == 4
+        return self.status == ST_ERROR
 
     def setToStop(self):
         if self.__subworks:
@@ -425,12 +438,13 @@ class WorkShop(ServeThreadBase):
 
     def addTask(self, task):
         assert isinstance(task, TaskBase)
+        if task.subWorks is None:
+            raise ValueError('[wd] can not add task, subwork is None (task not initialised)')
         if not self.isAvailable():
-            self.log.debug('[wd] can not add task, server is not available')
-            raise
-        swks = task.getSubWorks()
-        if not swks or len(swks) == 0:
-            task.call_by_ws_set_status(2)
+            raise ValueError('[wd] can not add task, server is not available')
+        if len(task.subWorks) == 0:
+            # empty task
+            task._call_by_ws_set_status(ST_FINISHED)
             self.__clean.addWork(WorkShop.SerWork(task))
             return
         self.__task_buff.put(task)
@@ -449,7 +463,7 @@ class WorkShop(ServeThreadBase):
         self.__wd.serve()
         self.__clean.serve()
         self._set_server_available()
-        monitor = _Moniter(self.log)
+        # monitor = _Moniter(self.log)
         while not self.isSetStop():
             # monitor.report(self.info())
             curr_task = None
@@ -458,43 +472,39 @@ class WorkShop(ServeThreadBase):
                 if not self.__task_buff.empty():
                     curr_task = self.__task_buff.get()
                     self.__curr_tasks.append(curr_task)
-                    curr_task.call_by_ws_set_status(1)
-                    sbwks = curr_task.getSubWorks()
-                    if not sbwks or len(sbwks) == 0:
-                        self.log.debug('[ws] Task has no sub work')
-                    else:
-                        self.__wd.addWorks(sbwks)
-                        self.log.debug('[ws] pop a Task: %s', curr_task.name)
+                    curr_task._call_by_ws_set_status(ST_WORKING)
+                    self.__wd.addWorks(curr_task.subWorks)
+                    self.log.debug('[ws] pop a Task: %s', curr_task.name)
                     curr_task = None
 
                 for i, tk in enumerate(self.__curr_tasks):
                     wkarchvied = True
-                    for wk in tk.getSubWorks():
-                        if wk.status != 2:
+                    for wk in tk.subWorks:
+                        if wk.status != ST_FINISHED:
                             wkarchvied = False
-                        elif wk.status == 4:
-                            tk.call_by_ws_set_status(4)
+                        elif wk.status == ST_ERROR:
+                            tk._call_by_ws_set_status(ST_ERROR)
                             tk.setToStop()
                             tk.waitForStop()
                             self.log.debug('[ws] Task err: %s', tk.name)
                             del self.__curr_tasks[i]
-                        elif wk.status == 3:
-                            tk.call_by_ws_set_status(3)
+                        elif wk.status == ST_CANCEL:
+                            tk._call_by_ws_set_status(ST_CANCEL)
                             tk.setToStop()
                             tk.waitForStop()
                             self.log.debug('[ws] Task canceled: %s', tk.name)
                             del self.__curr_tasks[i]
                     if wkarchvied:
-                        tk.call_by_ws_set_status(2)
+                        tk._call_by_ws_set_status(ST_FINISHED)
                         self.log.debug('[ws] Task done: %s', tk.name)
                         del self.__curr_tasks[i]
-                    if tk.status > 1:
+                    if tk.status > ST_WORKING:
                         self.log.debug('[ws] cleanup')
                         self.__clean.addWork(WorkShop.SerWork(tk))
             except Exception as e:
                 # TODO: fetal err, need handle and report
                 if curr_task:
-                    curr_task.call_by_ws_set_status(4)
+                    curr_task._call_by_ws_set_status(ST_ERROR)
                 self.log.exception(e)
             finally:
                 duration = _time() - start_at
@@ -512,15 +522,15 @@ class WorkShop(ServeThreadBase):
     def __cleanUp(self):
         for i, tk in enumerate(self.__curr_tasks):
             if tk.isError():
-                tk.call_by_ws_set_status(4)
+                tk._call_by_ws_set_status(ST_ERROR)
                 tk.setToStop()
                 tk.waitForStop()
                 self.log.debug('[ws] Task err: %s', tk.name)
             elif tk.isArchived():
-                tk.call_by_ws_set_status(2)
+                tk._call_by_ws_set_status(ST_FINISHED)
                 self.log.debug('[ws] Task done: %s', tk.name)
             else:
-                tk.call_by_ws_set_status(3)
+                tk._call_by_ws_set_status(ST_CANCEL)
                 tk.setToStop()
                 tk.waitForStop()
                 self.log.debug('[ws] Task not finish: %s', tk.name)
@@ -529,7 +539,7 @@ class WorkShop(ServeThreadBase):
 
         while not self.__task_buff.empty():
             tk = self.__task_buff.get()
-            tk.call_by_ws_set_status(3)
+            tk._call_by_ws_set_status(ST_CANCEL)
             self.__clean.addWork(WorkShop.SerWork(tk))
             self.log.debug('[ws] cleanup')
 
@@ -554,6 +564,9 @@ class WorkShop(ServeThreadBase):
             self.task.cleanup()
             log.debug('[SerWork] cleanup')
 
+
+
+# local test code
 
 class WorkTest(WorkBase):
     TOTAL = 0
@@ -653,9 +666,9 @@ class TaskTest(TaskBase):
         subworks = []
         for i in range(self.sub_size):
             subworks.append(WorkTest('t_%s_%d' % (self.name, i)))
-        self.log.error(' ........... am Task %s, subworks=%d', self.name, len(subworks))
+        self.addSubWorks(subworks)
         _sleep(0.1)
-        return subworks
+        self.log.error(' ........... am Task %s, subworks=%d', self.name, len(subworks))
 
     def cleanup(self):
         TaskTest.clean()
@@ -674,6 +687,8 @@ def ws_test(log=None):
         ws.serve()
         while True:
             task = TaskTest(randint(0, 10), name='T_%05d' % i, log=log)
+            task.makeSubWorks()
+            assert task.subWorks is not None
             # wk.cancel()
             ws.addTask(task)
             tasks.append(task)
@@ -724,8 +739,8 @@ if __name__ == "__main__":
         import logging
         log = util.get_logger(level=logging.DEBUG)
         # wd_test(log)
-        wd_test_1(log)
-        # ws_test(log)
+        # wd_test_1(log)
+        ws_test(log)
     except KeyboardInterrupt as e:
         print 'stop by user'
         exit(0)
