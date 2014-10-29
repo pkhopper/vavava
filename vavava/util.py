@@ -184,7 +184,7 @@ class SynFileContainer:
             self.__fp = fp
             self.name = 'memory_file.%s' % hash(fp)
         else:
-            raise ValueError('must be a fiel or ByteIO')
+            raise ValueError('must be a file or ByteIO')
 
     def seek_write(self, b, pos=-1, whence=0):
         with self.mutex:
@@ -203,3 +203,16 @@ def get_local_ip(ifname='eth0'):
         0x8915,  # SIOCGIFADDR
         struct.pack('256s', ifname[:15])
     )[20:24])
+
+def splitfile(f, strip_line=None, del_empty_line=True):
+    if not os.path.exists(f):
+        return []
+    if not os.path.isfile(f):
+        raise ValueError('should be a file, {} is dir not file.'.format(f))
+    with open(f, 'r') as fp:
+        results = fp.readlines()
+        if strip_line:
+            results = [l.strip(strip_line) for l in results]
+        if del_empty_line:
+            results = [l for l in results if l != '']
+    return results

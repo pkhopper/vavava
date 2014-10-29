@@ -19,7 +19,7 @@ DEBUG_LVL = 0
 DEFAULT_HEADERS = {
     'Referer'   : "http://www.time.com/",
     'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US; rv:1.9.1.6) Gecko/20091201 Firefox/3.5.6',
-    'Connection': 'keep-alive',
+    # 'Connection': 'keep-alive',
     'Accept'    : 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
 }
 
@@ -48,6 +48,7 @@ class HttpUtil:
             urllib2.ProxyHandler,
             urllib2.UnknownHandler,
             urllib2.HTTPHandler,
+            urllib2.HTTPSHandler,
             urllib2.HTTPDefaultErrorHandler,
             urllib2.HTTPRedirectHandler,
             urllib2.FTPHandler,
@@ -83,7 +84,24 @@ class HttpUtil:
 
     def get_response(self, url, post_data=None, timeout=TIMEOUT):
         req = urllib2.Request(url, data=post_data, headers=self._headers)
-        return self._opener.open(req, timeout=timeout)
+        if self._debug_lvl > 0:
+            self.handlers = [
+                ContentEncodingProcessor,  # diff with urllib2.build_opener(), disabled by HttpDownloadClipHandler
+                urllib2.ProxyHandler,
+                urllib2.UnknownHandler,
+                # urllib2.HTTPHandler,
+                # urllib2.HTTPSHandler,
+                urllib2.HTTPDefaultErrorHandler,
+                urllib2.HTTPRedirectHandler,
+                urllib2.FTPHandler,
+                urllib2.FileHandler,
+                urllib2.HTTPErrorProcessor
+            ]
+            self.build_opener()
+            self._opener.add_handler(urllib2.HTTPHandler(debuglevel=1))
+            self._opener.add_handler(urllib2.HTTPSHandler(debuglevel=1))
+        res = self._opener.open(req, timeout=timeout)
+        return res
 
     def build_opener(self, *handlers):
         import types
@@ -149,8 +167,6 @@ class HttpUtil:
         self.build_opener()
 
     def set_debug_level(self, level=0):
-        from httplib import HTTPConnection
-        HTTPConnection.debuglevel = level
         self._debug_lvl = level
 
 
@@ -350,4 +366,7 @@ def main_test():
     ttttt(4, test_urls, log)
 
 if __name__ == "__main__":
-    main_test()
+    # main_test()
+    http = HttpUtil()
+    http.set_debug_level(1)
+    http.get("http://www.baidu.com")
