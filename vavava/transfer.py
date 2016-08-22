@@ -89,13 +89,16 @@ def client(ip, port, fileName):
         print "file not exist ", fileName
         return
     s = FileTransfer ()
-    with open(fileName, "r") as f:
+    with open(fileName, "rb") as f:
         while True:
-            data = f.read(1024)
+            data = f.read()
             if data:
                 s.dataBuffer += data
             else:
                 break
+    len1 = os.path.getsize(fileName)
+    len2 = len(s.dataBuffer)
+    assert(len1 == len2)
     s.send(ip, port, s.dataBuffer)
     print len(s.dataBuffer), " sended"
 
