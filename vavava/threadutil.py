@@ -679,7 +679,7 @@ def ws_test(log=None):
     if log is None:
         import util
         log = util.get_logger()
-    ws = WorkShop(tmin=5, tmax=10, log=log)
+    ws = WorkShop(tmin=5, tmax=20, log=log)
     i = 0
     total = 0
     tasks = []
