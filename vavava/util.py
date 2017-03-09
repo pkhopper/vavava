@@ -256,8 +256,8 @@ class Command(object):
             print 'Thread finished'
         thread = threading.Thread(target=target)
         thread.start()
-        thread.join(1)
         while True:
+            thread.join(1)
             if not thread.is_alive():
                 return self.process.returncode
             if timeout > 0:
@@ -265,6 +265,18 @@ class Command(object):
             else:
                 print 'Terminating process'
                 self.process.terminate()
+                break
+
+        timeout = 3
+
+        while True:
+            thread.join(1)
+            if not thread.is_alive():
+                return self.process.returncode
+            if timeout > 0:
+                timeout -= 1
+            else:
+                print 'kill process'
                 self.process.kill()
-                thread.join()
-        print self.process.returncode
+
+        return self.process.returncode
