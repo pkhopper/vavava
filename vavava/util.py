@@ -8,13 +8,18 @@ import time
 import chardet
 import json
 
+
 get_time_string = lambda: time.strftime("%Y%m%d%H%M%S", time.localtime())
 get_charset = lambda ss: chardet.detect(ss)['encoding']
 set_default_utf8 = lambda: reload(sys).setdefaultencoding("utf8")
 file_sufix = lambda name: os.path.splitext(name)[1][1:]
 
+
 import signal
 import threading
+import subprocess
+
+
 
 class SignalHandlerBase:
     """handle SIGTERM signal for current process """
@@ -49,6 +54,7 @@ def get_logger(logfile=None, level=logging.DEBUG):
     logger.setLevel(level)
     return logger
 
+
 def script_path(file_fullname):
     """ return path of file_fullname
         if file_full_name is link file, return origin file path
@@ -59,6 +65,7 @@ def script_path(file_fullname):
     else:
         script_path = os.path.dirname(os.path.abspath(file_fullname))
     return script_path
+
 
 class JsonConfig:
     def __init__(self, path=None, *attrs):
@@ -73,10 +80,12 @@ def reg_helper(text, reg_str="", mode=re.I | re.S):
     reg = re.compile(reg_str, mode)
     return reg.findall(text)
 
+
 def reg_1(pattern, string):
     m = re.search(pattern, string)
     if m:
         return m.group(1)
+
 
 def import_any_module(name):
     """ import module at any place """
@@ -89,6 +98,7 @@ def import_any_module(name):
             return getattr(mod, name[i + 1:])
         except:
             raise RuntimeError('No module of: %s found' % name)
+
 
 def assure_path(path):
     fullpath = os.path.abspath(path)
@@ -146,6 +156,7 @@ def walk_dir(top, topdown=True, onerror=None, followlinks=False):
     if not topdown:
         yield top, dirs, files, dlns, flns, others
 
+
 def md5_for_file(f, block_size=2**20):
     import hashlib
     md5 = hashlib.md5()
@@ -156,10 +167,12 @@ def md5_for_file(f, block_size=2**20):
         md5.update(data)
     return md5.hexdigest()
 
+
 def check_cmd(cmd):
     for cmdpath in os.environ['PATH'].split(':'):
         if os.path.isdir(cmdpath) and cmd in os.listdir(cmdpath):
             return True
+
 
 class Monitor:
     def __init__(self, log=None):
@@ -172,6 +185,7 @@ class Monitor:
             else:
                 sys.stderr.writelines([str, '\n'])
             self.last = time.time()
+
 
 from io import BytesIO
 class SynFileContainer:
@@ -193,6 +207,7 @@ class SynFileContainer:
                     self.__fp.seek(pos, whence)
                 self.__fp.write(b)
 
+
 def get_local_ip(ifname='eth0'):
     import socket
     import fcntl
@@ -203,6 +218,7 @@ def get_local_ip(ifname='eth0'):
         0x8915,  # SIOCGIFADDR
         struct.pack('256s', ifname[:15])
     )[20:24])
+
 
 def splitfile(f, strip_line=None, del_empty_line=True):
     if not os.path.exists(f):
@@ -216,3 +232,39 @@ def splitfile(f, strip_line=None, del_empty_line=True):
         if del_empty_line:
             results = [l for l in results if l != '']
     return results
+
+
+class Command(object):
+    def __init__(self, cmd):
+        self.cmd = cmd
+        self.process = None
+
+    def run(self, timeout):
+        # verion 3.*
+        if sys.version >= '3':
+            try:
+                self.process = subprocess.Popen(self.cmd, shell=True)
+                self.process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                print("timeout ....")
+                return None
+        # version 2.*
+        def target():
+            print 'Thread started'
+            self.process = subprocess.Popen(self.cmd, shell=True)
+            self.process.communicate()
+            print 'Thread finished'
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join(1)
+        while True:
+            if not thread.is_alive():
+                return self.process.returncode
+            if timeout > 0:
+                timeout -= 1
+            else:
+                print 'Terminating process'
+                self.process.terminate()
+                self.process.kill()
+                thread.join()
+        print self.process.returncode
