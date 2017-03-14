@@ -57,13 +57,15 @@ class HttpUtil:
         ]
         self.build_opener()
 
-    def get(self, url, timeout=TIMEOUT):
+    def get(self, url, timeout=TIMEOUT, method="GET"):
         self.response = self.get_response(url, timeout=timeout)
+        self.response.get_method = lambda: method
         return self.response.read()
 
-    def post(self, url, post_dic, timeout=TIMEOUT):
+    def post(self, url, post_dic, timeout=TIMEOUT, method="POST"):
         post_data = urllib.urlencode(post_dic).encode('utf8')
         self.response = self.get_response(url, post_data=post_data, timeout=timeout)
+        self.response.get_method = lambda: method
         return self.response.read()
 
     def head(self, url, timeout=TIMEOUT):
