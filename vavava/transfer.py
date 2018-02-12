@@ -8,7 +8,10 @@ import sys
 import os
 import time
 import getopt
-reload (sys).setdefaultencoding ("utf8")
+
+if sys.version < 3:
+    reload (sys).setdefaultencoding ("utf8")
+
 
 class FileTransfer:
     def __init__(self):
@@ -29,17 +32,17 @@ class FileTransfer:
         self.sock.setsockopt (socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind ((self.ip, self.port))
         self.sock.listen (5)
-        print "listen at ", self.ip, ":", self.port
+        print("listen at ", self.ip, ":", self.port)
         self.conn, self.peerAddr = self.sock.accept ()
-        print "connected by ", self.peerAddr
+        print("connected by ", self.peerAddr)
         self.startAt = time.time ()
         self.recv()
-        print "recieved data: ", len(self.dataBuffer)
+        print("recieved data: ", len(self.dataBuffer))
         self.sock.close()
 
     def recv(self):
         begin = time.time ()
-        print 'Connected by ', self.peerAddr, ' at ', begin
+        print('Connected by ', self.peerAddr, ' at ', begin)
 
         while True:
             # if you got some data, then break after wait sec
@@ -62,19 +65,19 @@ class FileTransfer:
         self.port = port
         self.sock = socket.socket (socket.AF_INET, socket.SOCK_STREAM)
         err = self.sock.connect_ex((self.ip, self.port))
-        print self.sock, "connected ", err
+        print(self.sock, "connected ", err)
         data_send = 0
         data_send += self.sock.send (data)
         if len (data) == data_send:
-            print "send ", len (data)
+            print("send ", len (data))
         else:
-            print "err, send ", data_send
+            print("err, send ", data_send)
 
         self.sock.close()
 
 def server(ip, port, fileName, force):
     if os.path.exists(fileName):
-        print "file exist ", fileName
+        print("file exist ", fileName)
         if not force:
             return
     s = FileTransfer()
@@ -82,11 +85,11 @@ def server(ip, port, fileName, force):
     s.serve_once(ip, port)
     with open(fileName, "wb") as f:
         f.write(s.dataBuffer)
-    print "ok "
+    print("ok ")
 
 def client(ip, port, fileName):
     if not os.path.exists (fileName):
-        print "file not exist ", fileName
+        print("file not exist ", fileName)
         return
     s = FileTransfer ()
     with open(fileName, "rb") as f:
@@ -100,12 +103,12 @@ def client(ip, port, fileName):
     len2 = len(s.dataBuffer)
     assert(len1 == len2)
     s.send(ip, port, s.dataBuffer)
-    print len(s.dataBuffer), " sended"
+    print(len(s.dataBuffer), " sended")
 
 def print_usage(optArray):
-    print """
+    print("""
     transfer
-    """, optArray
+    """, optArray)
 
 def main():
     global CONFIG
@@ -129,7 +132,7 @@ def main():
     try:
         opts, args = getopt.getopt (sys.argv[1:], "hic:", optArray)
     except getopt.GetoptError as e:
-        print e
+        print(e)
         print_usage (optArray)
         return
     if len (opts) == 0:
@@ -152,5 +155,5 @@ if __name__ == "__main__":
     try:
         main ()
     except KeyboardInterrupt as e:
-        print 'stop by user'
+        print('stop by user')
     exit (0)

@@ -9,9 +9,13 @@ import chardet
 import json
 
 
+if sys.version < '3':
+    set_default_utf8 = lambda: reload(sys).setdefaultencoding("utf8")
+else:
+    set_default_utf8 = None
+
 get_time_string = lambda: time.strftime("%Y%m%d%H%M%S", time.localtime())
 get_charset = lambda ss: chardet.detect(ss)['encoding']
-set_default_utf8 = lambda: reload(sys).setdefaultencoding("utf8")
 file_sufix = lambda name: os.path.splitext(name)[1][1:]
 
 
@@ -120,10 +124,12 @@ def walk_dir(top, topdown=True, onerror=None, followlinks=False):
     isfile, islink, join, isdir = os.path.isfile, os.path.islink, os.path.join, os.path.isdir
     try:
         names = os.listdir(top)
-    except os.error, os.err:
-        if onerror is not None:
-            onerror(os.err)
-        return
+    except Exception as e:
+        pass
+    # except os.error, os.err:
+    #     if onerror is not None:
+    #         onerror(os.err)
+    #     return
 
     dirs, files, dlns, flns, others = [], [], [], [], []
     for name in names:
@@ -191,7 +197,7 @@ from io import BytesIO
 class SynFileContainer:
     def __init__(self, fp):
         self.mutex = threading.Lock()
-        if isinstance(fp, file):
+        if hasattr(fp, 'read'):
             self.__fp = fp
             self.name = fp.name
         elif isinstance(fp, BytesIO):
@@ -209,15 +215,16 @@ class SynFileContainer:
 
 
 def get_local_ip(ifname='eth0'):
-    import socket
-    import fcntl
-    import struct
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    return socket.inet_ntoa(fcntl.ioctl(
-        s.fileno(),
-        0x8915,  # SIOCGIFADDR
-        struct.pack('256s', ifname[:15])
-    )[20:24])
+    if sys.version >= '3':
+        import socket
+        import fcntl
+        import struct
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        return socket.inet_ntoa(fcntl.ioctl(
+            s.fileno(),
+            0x8915,  # SIOCGIFADDR
+            struct.pack('256s', ifname[:15])
+        )[20:24])
 
 
 def splitfile(f, strip_line=None, del_empty_line=True):
@@ -250,10 +257,10 @@ class Command(object):
                 return None
         # version 2.*
         def target():
-            print 'Thread started'
+            print('Thread started')
             self.process = subprocess.Popen(self.cmd, shell=True)
             self.process.communicate()
-            print 'Thread finished'
+            print('Thread finished')
         thread = threading.Thread(target=target)
         thread.start()
         while True:
@@ -263,7 +270,7 @@ class Command(object):
             if timeout > 0:
                 timeout -= 1
             else:
-                print 'Terminating process'
+                print('Terminating process')
                 self.process.terminate()
                 break
 
@@ -276,7 +283,7 @@ class Command(object):
             if timeout > 0:
                 timeout -= 1
             else:
-                print 'kill process'
+                print('kill process')
                 self.process.kill()
 
         return self.process.returncode

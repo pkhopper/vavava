@@ -2,10 +2,15 @@
 # coding=utf-8
 
 import threading
-import Queue
+import sys
+if sys.version >= '3':
+    from queue import Queue
+else:
+    from Queue import Queue
 from random import randint
 from time import sleep as _sleep, time as _time
-from util import Monitor as _Moniter, get_logger as _get_logger
+from .util import Monitor as _Moniter
+from .util import get_logger as _get_logger
 
 # 0/1/2/3/4 = init/working/finish/cancel/error
 ST_INIT = 0
@@ -238,7 +243,7 @@ class WorkBase:
 class WorkerThread(ServeThreadBase):
     def __init__(self, standalone=None, log=None):
         ServeThreadBase.__init__(self, log=log)
-        self.__wk_qu = Queue.Queue()
+        self.__wk_qu = Queue()
         self.__ev = threading.Event()
         self.__curr_wk = None
         self.__busy = False
@@ -377,7 +382,7 @@ class TaskBase:
         for sw in subworks:
             self.__subworks.append(sw)
         if not self.__subworks:
-            print ''
+            pass
 
     @property
     def subWorks(self):
@@ -427,7 +432,7 @@ class TaskBase:
 class WorkShop(ServeThreadBase):
     def __init__(self, tmin=10, tmax=20, log=None):
         ServeThreadBase.__init__(self, log=log)
-        self.__task_buff = Queue.Queue()
+        self.__task_buff = Queue()
         self.__curr_tasks = []
         self.__wd = WorkDispatcher(tmin=tmin, tmax=tmax, log=log)
         self.__clean = WorkDispatcher(tmin=1, tmax=5, log=log)
@@ -742,5 +747,5 @@ if __name__ == "__main__":
         # wd_test_1(log)
         ws_test(log)
     except KeyboardInterrupt as e:
-        print 'stop by user'
+        print('stop by user')
         exit(0)
