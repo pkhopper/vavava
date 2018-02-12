@@ -9,8 +9,7 @@ else:
     from Queue import Queue
 from random import randint
 from time import sleep as _sleep, time as _time
-from .util import Monitor as _Moniter
-from .util import get_logger as _get_logger
+# from .util import Monitor as _Moniter
 
 # 0/1/2/3/4 = init/working/finish/cancel/error
 ST_INIT = 0
@@ -739,6 +738,7 @@ def ws_test(log=None):
 
 
 if __name__ == "__main__":
+    from .util import get_logger as _get_logger
     try:
         from vavava import util
         import logging
